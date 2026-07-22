@@ -1,0 +1,3 @@
+<launch>
+	<node pkg="auto_charging" type="auto_charge" name="auto_charge"/>
+</launch>

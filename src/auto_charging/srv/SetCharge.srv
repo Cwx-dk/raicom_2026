@@ -1,0 +1,8 @@
+bool nav
+uint16 track_id
+float32 track_dist
+float32 docking_dist
+geometry_msgs/Pose2D pose
+---
+string message
+bool success 

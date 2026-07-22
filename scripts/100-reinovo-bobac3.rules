@@ -1,0 +1,10 @@
+#USB
+KERNEL=="ttyUSB[0-6]",GROUP="root", MODE="0666"
+KERNEL=="ttyTHS[0-6]",GROUP="root", MODE="0666"
+KERNEL=="ttyACM[0-4]",GROUP="root", MODE="0666"
+#lidar
+KERNEL=="ttyUSB*", KERNELS=="1-2.1.1", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60",MODE:="0777", SYMLINK+="front_lidar"
+KERNEL=="ttyUSB*", KERNELS=="1-2.1.2", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60",MODE:="0777", SYMLINK+="rear_lidar"
+#camera
+KERNEL=="video*", ATTRS{idVendor}=="2304", ATTRS{idProduct}=="5220", MODE:="0666",  SYMLINK+="base_camera"
+KERNEL=="video*", ATTRS{idVendor}=="0c45", ATTRS{idProduct}=="6487", MODE:="0666", SYMLINK+="head_camera"
