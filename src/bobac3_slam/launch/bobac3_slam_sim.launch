@@ -1,6 +1,6 @@
 <launch>
   <!-- Arguments -->
-  <arg name="slam_methods" default="cartographer" doc="slam type [gmapping, cartographer, rtabmap]"/>
+  <arg name="slam_methods" default="gmapping" doc="slam type [gmapping, cartographer, rtabmap]"/>
 
   <arg name="bag_filename" default=" "/>
   <arg name="open_slam_rviz" default="true"/>

@@ -1,0 +1,15 @@
+# 人脸识别角色配置文件
+# 位置: /home/cde/bobac4/src/yolo_face/config/face_roles.yaml
+
+roles:
+  admin: "叶睿静"  # 当前管理员（修改这里可更换管理员）
+  visitors:
+    - "陈文贤"
+    - "游健珩" # 可以继续添加
+
+# 语音文件路径（可选配置）
+# 如果不需要自定义语音路径，可以在代码中硬编码
+voice_paths:
+  admin: "/home/cde/bobac4/yin/语音/管理员舒.mp3"
+  visitor: "/home/cde/bobac4/yin/语音/欢迎.mp3"
+  default: "/home/cde/bobac4/yin/语音/欢迎.mp3"
