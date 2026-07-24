@@ -1,0 +1,24 @@
+<launch>
+    <!-- 定义参数：是否显示调试信息 -->
+    <arg name="debug" default="false"/>
+    
+    <!-- 语音识别节点 -->
+    <node name="voice_recognition" pkg="voice_pkg" type="voice_recognition.py" 
+          output="screen" respawn="true" respawn_delay="2"/>
+    
+    <!-- YOLO人脸检测节点 -->
+    <node name="face_node" pkg="yolo_face" type="face_node.py" 
+          output="screen" respawn="true" respawn_delay="2"/>
+    
+    <!-- 导航目标节点 -->
+    <node name="nav_goal_node" pkg="reicoures_nav" type="nav_goal_node" 
+          output="screen" respawn="true" respawn_delay="2"/>
+    
+    <!-- 自动充电节点 -->
+    <node name="auto_charge_node" pkg="reicoures_relocalization" type="auto_charge_node" 
+          output="screen" respawn="true" respawn_delay="2"/>
+    
+    <!-- 任务调度节点 -->
+    <node name="task_scheduler_node" pkg="task_scheduler" type="task_scheduler_node" 
+          output="screen" respawn="true" respawn_delay="2"/>
+</launch>

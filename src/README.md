@@ -18,3 +18,5 @@ rosrun reicoures_nav nav_goal_node
 rosrun reicoures_relocalization auto_charge_node
 
 rosrun task_scheduler task_scheduler_node
+
+roslaunch task_scheduler tesk.launch
