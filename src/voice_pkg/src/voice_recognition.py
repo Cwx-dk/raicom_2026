@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# voice_recognition_node.py
+# voice_recognition.py
 # 语音识别节点，将麦克风输入转为文本并发布
 
 import rospy

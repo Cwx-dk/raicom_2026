@@ -11,6 +11,8 @@ rqt_image_view  使用ROS图像可视化工具查看相机
 
 rosrun voice_pkg voice_recognition.py
 
+rosrun yolo_face face_node.py 
+
 rosrun reicoures_nav nav_goal_node 
 
 rosrun reicoures_relocalization auto_charge_node
