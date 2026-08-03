@@ -1,0 +1,48 @@
+[submodule "src/relative_move"]
+	path = src/relative_move
+	url = https://gitee.com/reinovo/relative_move.git
+[submodule "src/ar_pose"]
+	path = src/ar_pose
+	url = https://gitee.com/reinovo/ar_pose.git
+[submodule "src/ar_track_alvar"]
+	path = src/ar_track_alvar
+	url = https://gitee.com/reinovo/ar_track_alvar.git
+[submodule "src/auto_charging"]
+	path = src/auto_charging
+	url = https://gitee.com/reinovo/auto_charging.git
+[submodule "src/rei_lidar_fuse"]
+	path = src/rei_lidar_fuse
+	url = https://gitee.com/reinovo/rei_lidar_fuse.git
+[submodule "src/rei_robot_base"]
+	path = src/rei_robot_base
+	url = https://gitee.com/reinovo/rei_robot_base.git
+[submodule "src/face_rec"]
+	path = src/face_rec
+	url = https://gitee.com/reinovo/face_rec.git
+[submodule "src/map_manager"]
+	path = src/map_manager
+	url = https://gitee.com/reinovo/map_manager.git
+[submodule "src/robot_audio"]
+	path = src/robot_audio
+	url = https://gitee.com/reinovo/robot_audio.git
+[submodule "src/pid_lib"]
+	path = src/pid_lib
+	url = https://gitee.com/reinovo/pid_lib.git
+[submodule "src/robot_joy"]
+	path = src/robot_joy
+	url = https://gitee.com/reinovo/robot_joy.git
+[submodule "src/berxel_camera"]
+	path = src/berxel_camera
+	url = https://gitee.com/reinovo/berxel_camera.git
+[submodule "src/bobac3_description"]
+	path = src/bobac3_description
+	url = https://gitee.com/reinovo/bobac3_description.git
+[submodule "src/cspc_lidar"]
+	path = src/cspc_lidar
+	url = https://gitee.com/reinovo/cspc_lidar.git
+[submodule "src/ros_map_edit"]
+	path = src/ros_map_edit
+	url = https://gitee.com/reinovo/ros_map_edit.git
+[submodule "src/rei_robot_cruise"]
+	path = src/rei_robot_cruise
+	url = https://gitee.com/reinovo/rei_robot_cruise.git

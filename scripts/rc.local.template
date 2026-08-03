@@ -1,0 +1,32 @@
+#!/bin/bash
+
+# WiFi热点配置脚本，系统启动时自动运行
+# 注意：此脚本需要以root权限执行
+
+# 清理可能存在的wlan1接口
+iw dev wlan1 del 2>/dev/null
+
+# 创建WiFi热点接口
+iw dev wlp1s0 interface add wlan1 type __ap
+if [ $? -ne 0 ]; then
+    echo "创建WiFi接口失败！" > /tmp/wifi_ap_error.log
+    exit 1
+fi
+
+# 设置MAC地址
+ip link set dev wlan1 address 22:33:44:55:66:00
+if [ $? -ne 0 ]; then
+    echo "设置MAC地址失败！" > /tmp/wifi_ap_error.log
+    iw dev wlan1 del
+    exit 1
+fi
+
+# 启动WiFi热点（WiFi名称将在使用setup_wifi_ap.sh时被替换）
+nohup create_ap -c 11 -g 192.168.8.1 wlan1 wlp1s0 RB3H01xxx reinovo888 &
+if [ $? -ne 0 ]; then
+    echo "启动WiFi热点失败！" > /tmp/wifi_ap_error.log
+    iw dev wlan1 del
+    exit 1
+fi
+
+exit 0

@@ -1,0 +1,7 @@
+<launch>
+  <arg name="base_config_file" default="$(find rei_robot_base)/config/$(env REI_ROBOT).yaml"/>
+
+  <node name="rei_base" pkg="rei_robot_base" type="robot_base_node">
+    <rosparam command="load" file="$(arg base_config_file)" />
+  </node>
+</launch>
