@@ -486,7 +486,9 @@ public:
      */
     void handleTaskComplete() {
         ROS_INFO("🏁 所有目标点已参观完成！");
-        
+        // 确认机器人位置（可选）
+        ROS_INFO("📍 机器人当前位于最后一个参观地点");
+        ROS_INFO("🔋 准备发送充电指令...");
         // speakSync("参观结束，现在去充电");
         sendChargeCommand();
         
@@ -562,6 +564,10 @@ public:
             ROS_INFO("📊 前进到下一个目标，索引: %d", current_index_);
             
             if (current_index_ >= route_.size()) {
+                ROS_INFO("🏁 所有目标点已参观完成！");          
+                 // 🔧 新增：等待短暂延迟，确保机器人完全停止
+                ROS_INFO("⏳ 等待机器人稳定...");
+                ros::Duration(1.0).sleep();
                 transitionTo(State::TASK_COMPLETE);
                 handleTaskComplete();
             } else {

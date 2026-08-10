@@ -50,6 +50,12 @@ DWAPlannerROS:
   occdist_scale: 250            # 0.01   控制器尝试避免障碍物的权重
 
   forward_point_distance: 0.4 # 0.325  从机器人中心点到另一个得分点的距离 
+  # path_distance_bias: 50.0      # 32.0/10.0   - weighting for how much it should stick to the global path plan
+  # goal_distance_bias: 16.5    # 24.0   - wighting for how much it should attempt to reach its goal
+  # occdist_scale: 250            # 0.01   控制器尝试避免障碍物的权重
+
+  # forward_point_distance: 0.1 # 0.325  从机器人中心点到另一个得分点的距离 
+
 
   # 用于设置机器人在到达目标点后的停止时间缓冲
   # 如果机器人具有较大的惯性或速度控制较为灵敏，则可以适当增加stop_time_buffer以确保机器人能够安全停止。

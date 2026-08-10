@@ -30,10 +30,10 @@ ros::Publisher charge_complete_pub;
 
 // 充电参数（可根据实际情况调整）
 // 在地图中测量充电桩的实际坐标
-const double CHARGE_POS_X = 0.2558;
-const double CHARGE_POS_Y = 0.0061;
-const double CHARGE_POS_Z = -0.7;
-const double CHARGE_POS_W = 0.7;
+const double CHARGE_POS_X = 0.5058;
+const double CHARGE_POS_Y = -0.0052;
+const double CHARGE_POS_Z = 0;
+const double CHARGE_POS_W = 0;
 const int AR_ID = 0;
 // 根据摄像头和充电口的实际距离调整
 const double AR_DIST = 0.4;
