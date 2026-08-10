@@ -1,7 +1,8 @@
 <launch>
   <arg name="open_nav_rviz" default="true"/>
   <arg name="map_file_name" default="reimap"/>
-  <arg name="map_directory" default="$(env MAP_DIRECTORY)"/>
+  <!-- <arg name="map_directory" default="$(env MAP_DIRECTORY)"/> -->
+  <arg name="map_directory" default="$(find bobac3_navigation)/maps"/>
 	<arg name="location_method" default="amcl_sim" 
 				doc="location type [amcl_sim, cartographer_sim]"/>
 	<!--bobac3 model description-->

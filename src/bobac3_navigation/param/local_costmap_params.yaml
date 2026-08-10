@@ -12,3 +12,12 @@ local_costmap:
     - {name: obstacle_layer,      type: "costmap_2d::VoxelLayer"}
     - {name: virtual_wall_layer,     type: "costmap_2d::StaticLayer"}
     - {name: inflation_layer,     type: "costmap_2d::InflationLayer"}
+
+
+virtual_wall_layer:
+     enabled: true
+     map_topic: "/virtual_wall_map"             # 明确指定订阅虚拟墙话题！
+     first_map_only: false                     # 允许动态更新虚拟墙
+     subscribe_to_updates: true                # 订阅 /virtual_wall_map_updates 增量更新
+     use_maximum: true                         # 开启最大值叠加（防止覆盖其他静态层）
+     

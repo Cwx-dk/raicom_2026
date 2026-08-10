@@ -1,6 +1,7 @@
 rosrun teleop_twist_keyboard teleop_twist_keyboard.py 键盘
 rostopic echo /odom #获取里程计
 rostopic pub /voice_recognition std_msgs/String "参观" -1
+rostopic echo /clicked_point 取坐标点
 <!-- roslaunch bobac3_description gazebo.launch -->
 <!-- roslaunch bobac3_navigation demo_nav_2d.launch map_file_name:=reicom -->
 roslaunch bobac3_navigation demo_nav_2d.launch map_file_name:=reimap
@@ -19,4 +20,4 @@ rosrun reicoures_relocalization auto_charge_node
 
 rosrun task_scheduler task_scheduler_node -->
 
-roslaunch task_scheduler tesk.launch
+roslaunch task_scheduler test.launch

@@ -349,13 +349,15 @@ class VirtualWallMapPublisher:
         
         # 根据地图分辨率计算虚拟墙厚度
         # 分辨率越小（地图越精细），厚度应该越大
-        if self.map_info.resolution <= 0.025:  # 高分辨率地图
-            wall_thickness = 7
-        elif self.map_info.resolution <= 0.05:  # 中等分辨率地图
-            wall_thickness = 5
-        else:  # 低分辨率地图
-            wall_thickness = 3
-        
+        # if self.map_info.resolution <= 0.025:  # 高分辨率地图
+        #     wall_thickness = 7
+        # elif self.map_info.resolution <= 0.05:  # 中等分辨率地图
+        #     wall_thickness = 5
+        # else:  # 低分辨率地图
+        #     wall_thickness = 3
+        wall_thickness = 1
+
+
         rospy.loginfo(f"Using wall thickness: {wall_thickness} pixels (resolution: {self.map_info.resolution})")
         
         for wall in self.virtual_walls:
