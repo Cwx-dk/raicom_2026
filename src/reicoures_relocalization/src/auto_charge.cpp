@@ -29,13 +29,17 @@ ros::ServiceClient track_client;
 ros::Publisher charge_complete_pub;
 
 // 充电参数（可根据实际情况调整）
-const double CHARGE_POS_X = 0.4000;
-const double CHARGE_POS_Y = 1.9455;
+// 在地图中测量充电桩的实际坐标
+const double CHARGE_POS_X = 0.2558;
+const double CHARGE_POS_Y = 0.0061;
 const double CHARGE_POS_Z = -0.7;
 const double CHARGE_POS_W = 0.7;
 const int AR_ID = 0;
+// 根据摄像头和充电口的实际距离调整
 const double AR_DIST = 0.4;
+// 如果充电口需要更精确对接，调整这个值
 const double REL_MOVE_FORWARD = -0.18;
+// 确保完全断开连接
 const double REL_MOVE_BACK = 0.18;
 const int CHARGE_DURATION_SECONDS = 30;  // 充电持续时间（秒），实际可改为等待电池电量到达阈值
 

@@ -1,10 +1,11 @@
 <launch>
   <arg name="open_rviz" default="false"/>
+  <arg name="use_sim_time" default="true"/>
   <arg name="laser_type" default="CSPC"/>
-  <arg name="world_name" value="$(find bobac3_description)/world/reinovo_2025reicom_bobac3.world"/>
+  <arg name="world_name" value="$(find bobac3_description)/world/reinovo_2026_bobac3.world"/>
   <include file="$(find gazebo_ros)/launch/empty_world.launch">
     <arg name="world_name" value="$(arg world_name)" />
-    <!--arg name="use_sim_time" value="true"/-->
+    <arg name="use_sim_time" value="$(arg use_sim_time)"/>
   </include>
   <param name = "robot_description" 
     command="$(find xacro)/xacro $(find bobac3_description)/xacro/bobac3_serverbot.xacro sim:=1 laser_type:=$(arg laser_type)"/>
@@ -13,12 +14,12 @@
     name="spawn_model"
     pkg="gazebo_ros"
     type="spawn_model"
-    args="-param robot_description -urdf -model bobac3_serverbot"
+    args="-param robot_description -urdf -model bobac3_serverbot -z 0.01"
     output="screen" />
   <node name="spawn_cylinder_obstacle"
         pkg="gazebo_ros"
         type="spawn_model"
-        args="-sdf -file $(find bobac3_description)/xacro/model.sdf -model cylinder_obstacle -x 0 -y -0.6 -z 0.5"
+        args="-sdf -file $(find bobac3_description)/xacro/model.sdf -model cylinder_obstacle -x 0.0 -y -0.6 -z 0.5"
         output="screen"/>
   <node
     name="robot_state_publisher"

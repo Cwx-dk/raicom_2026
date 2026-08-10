@@ -99,8 +99,8 @@ private:
     const int CHARGE_TIMEOUT_SECONDS = 60;
     
     // ==================== 坐标常量 ====================
-    const double LOBBY_X = 0.80;      // 走廊/大厅位置 X
-    const double LOBBY_Y = 0.231;     // 走廊/大厅位置 Y
+    const double LOBBY_X = 1.241;      // 走廊/大厅位置 X
+    const double LOBBY_Y = 2.137;     // 走廊/大厅位置 Y
     const double START_X = 0.0;       // 起点/出发区 X
     const double START_Y = 0.0;       // 起点/出发区 Y
     
@@ -141,20 +141,26 @@ public:
     void initRoute() {
         route_ = {
             {
-                "展厅A",
-                2.490, 2.190,
+                "餐厅",
+                2.220, 1.034,
                 0.0,
                 "这里是展厅A，主要展示智能机器人技术"
             },
             {
-                "展厅B",
-                2.474, 1.181,
+                "厨房",
+                1.251, 1.013,
                 0.0,
                 "这里是展厅B，介绍人工智能算法应用"
             },
             {
-                "展厅C",
-                2.476, 0.203,
+                "客厅",
+                1.267, -0.028,
+                0.0,
+                "这里是展厅C，展示自动驾驶模拟系统"
+            },
+            {
+                "卧室",
+                2.252, -0.056,
                 0.0,
                 "这里是展厅C，展示自动驾驶模拟系统"
             }
@@ -481,7 +487,7 @@ public:
     void handleTaskComplete() {
         ROS_INFO("🏁 所有目标点已参观完成！");
         
-        speakSync("参观结束，现在去充电");
+        // speakSync("参观结束，现在去充电");
         sendChargeCommand();
         
         transitionTo(State::CHARGING);

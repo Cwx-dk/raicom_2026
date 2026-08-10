@@ -1,3 +1,4 @@
+<?xml version="1.0"?>
 <robot name="custom_roller" xmlns:xacro="http://wiki.ros.org/xacro">
   <xacro:macro name="custom_roller" params="prefix parent index xyz rpy sim">
     <link name="${prefix}/roller_${index}_link">

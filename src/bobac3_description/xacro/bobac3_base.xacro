@@ -1,3 +1,4 @@
+<?xml version="1.0"?>
 <robot name="bobac3_base" xmlns:xacro="http://wiki.ros.org/xacro">
   <!-- <xacro:include filename="$(find bobac3_description)/xacro/omni_wheel.xacro" /> -->
   <xacro:include filename="$(find bobac3_description)/xacro/normal_wheel.xacro" />
