@@ -1478,6 +1478,10 @@ public:
     // 任务一完成
     // =========================================================
 
+// =========================================================
+// 任务一完成 -> 先去充电
+// =========================================================
+
     void handleTaskComplete()
     {
         ROS_INFO(
@@ -1493,40 +1497,139 @@ public:
         );
 
         ROS_INFO(
-            "🏠 准备返回出发区"
+            "🔋 准备前往充电桩充电"
         );
 
         ROS_INFO(
             "========================================"
         );
 
+        // 语音提示去充电
+        speakSync(
+            "参观结束，现在去充电"
+        );
 
-        returnToStart();
+        // 发送充电指令
+        sendChargeCommand();
+
+        // 进入充电状态
+        transitionTo(
+            State::CHARGING
+        );
+
+        charge_completed_ =
+            false;
+
+        // 等待充电完成
+        waitForChargeComplete();
     }
 
 
     // =========================================================
     // 返回出发区
     // =========================================================
+// =========================================================
+// 等待充电完成
+// =========================================================
+
+    void waitForChargeComplete()
+    {
+        ROS_INFO(
+            "⏳ 等待充电完成..."
+        );
+
+        // 设置充电超时计时器
+        int charge_timeout_counter = 0;
+        ros::Rate loop_rate(LOOP_RATE_HZ);
+
+        while (
+            ros::ok()
+            &&
+            !charge_completed_.load()
+        )
+        {
+            ros::spinOnce();
+
+            charge_timeout_counter++;
+
+            if (
+                charge_timeout_counter
+                >
+                CHARGE_TIMEOUT_SECONDS
+                *
+                LOOP_RATE_HZ
+            )
+            {
+                ROS_ERROR(
+                    "⏰ 充电超时！(%d秒)，跳过充电直接返回起点",
+                    CHARGE_TIMEOUT_SECONDS
+                );
+
+                break;
+            }
+
+            // 每10秒打印一次等待信息
+            if (
+                charge_timeout_counter
+                %
+                (
+                    10
+                    *
+                    LOOP_RATE_HZ
+                )
+                ==
+                0
+            )
+            {
+                ROS_INFO(
+                    "⏳ 等待充电完成... 已等待 %d 秒",
+                    charge_timeout_counter / LOOP_RATE_HZ
+                );
+            }
+
+            loop_rate.sleep();
+        }
+
+        if (
+            charge_completed_.load()
+        )
+        {
+            ROS_INFO(
+                "✅ 充电完成，开始返回起点"
+            );
+        }
+
+        // 充电完成后返回起点
+        returnToStart();
+    }
+
+// =========================================================
+// 返回出发区
+// =========================================================
 
     void returnToStart()
     {
+        ROS_INFO(
+            "========================================"
+        );
+
         ROS_INFO(
             "🏠 返回出发区 (%.2f, %.2f)",
             START_X,
             START_Y
         );
 
+        ROS_INFO(
+            "========================================"
+        );
 
         geometry_msgs::PoseStamped home;
-
 
         home.header.frame_id =
             "map";
 
         home.header.stamp =
             ros::Time::now();
-
 
         home.pose.position.x =
             START_X;
@@ -1536,7 +1639,6 @@ public:
 
         home.pose.position.z =
             0.0;
-
 
         home.pose.orientation.x =
             0.0;
@@ -1550,18 +1652,15 @@ public:
         home.pose.orientation.w =
             1.0;
 
-
         // 必须先改变状态
         transitionTo(
             State::RETURNING
         );
 
-
         // 再发目标
         goal_pub_.publish(
             home
         );
-
 
         ROS_INFO(
             "📤 已发送返回出发区命令"
@@ -1570,8 +1669,55 @@ public:
         ROS_INFO(
             "🔄 正在返回出发区..."
         );
-    }
 
+        // 等待导航完成后再结束
+        // 或设置超时后自动结束
+        int return_timeout = 0;
+
+        while (
+            ros::ok()
+            &&
+            current_state_
+            == State::RETURNING
+        )
+        {
+            ros::spinOnce();
+            ros::WallDuration(0.1).sleep();
+
+            return_timeout++;
+
+            if (
+                return_timeout
+                >
+                NAV_TIMEOUT_SECONDS
+                *
+                10
+            )
+            {
+                ROS_ERROR(
+                    "⏰ 返回出发区超时，强制结束"
+                );
+
+                break;
+            }
+        }
+
+        // 到达起点后播报结束语
+        speakSync(
+            "已回到起点，感谢参观"
+        );
+
+        transitionTo(
+            State::TASK_COMPLETE
+        );
+
+        all_done_ =
+            true;
+
+        ROS_INFO(
+            "✅ 已回到起点，任务全部完成"
+        );
+    }
 
     // =========================================================
     // 地点5秒原则
@@ -2065,7 +2211,12 @@ public:
 
 
                 case State::CHARGING:
-                {
+                {   
+                    ROS_INFO_THROTTLE(
+                        5.0,
+                        "🔋 正在充电中..."
+                    );
+                    
                     break;
                 }
 
