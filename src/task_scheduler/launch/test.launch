@@ -1,9 +1,8 @@
 <launch>
 
-    <!-- ================================================ -->
-    <!-- 语音识别节点 -->
-    <!-- 当前 PyAudio 设备 [6] = pulse -->
-    <!-- ================================================ -->
+    <!-- ================================================== -->
+    <!-- 语音识别 -->
+    <!-- ================================================== -->
     <node name="voice_recognition"
           pkg="voice_pkg"
           type="voice_recognition.py"
@@ -11,14 +10,20 @@
           respawn="true"
           respawn_delay="2">
 
-        <param name="device_index" value="6"/>
+        <param name="device_index"
+               value="6"/>
 
     </node>
 
 
-    <!-- ================================================ -->
-    <!-- YOLO人脸检测节点 -->
-    <!-- ================================================ -->
+    <!-- ================================================== -->
+    <!-- 人脸唤醒 -->
+    <!-- 注意：
+         test.launch 只负责启动 face_node。
+         是否真正打开电脑摄像头，应由 face_node 根据
+         /face_detection_enable 动态控制。
+    -->
+    <!-- ================================================== -->
     <node name="face_node"
           pkg="yolo_face"
           type="face_node.py"
@@ -27,9 +32,9 @@
           respawn_delay="2"/>
 
 
-    <!-- ================================================ -->
-    <!-- 导航目标节点 -->
-    <!-- ================================================ -->
+    <!-- ================================================== -->
+    <!-- /nav_goal -> move_base -->
+    <!-- ================================================== -->
     <node name="nav_goal_node"
           pkg="reicoures_nav"
           type="nav_goal_node"
@@ -38,10 +43,22 @@
           respawn_delay="2"/>
 
 
-    <!-- ================================================ -->
-    <!-- 自动充电节点 -->
-    <!-- 任务一暂时不会使用，但可以先保留 -->
-    <!-- ================================================ -->
+    <!-- ================================================== -->
+    <!-- 任务三充电所需服务 -->
+    <!-- relative_move：最终充电对接/退出 -->
+    <!-- ar_base_sim：使用 /bottom_camera 识别充电AR码 -->
+    <!-- 这里不会抬高 bottom_camera -->
+    <!-- ================================================== -->
+    <include file="$(find relative_move)/launch/relative_move.launch"/>
+
+    <include file="$(find ar_pose)/launch/ar_base_sim.launch"/>
+
+
+    <!-- ================================================== -->
+    <!-- 自动充电控制 -->
+    <!-- 只有 task_scheduler 在任务三结束后发布 -->
+    <!-- /charge_command=true 才真正执行充电 -->
+    <!-- ================================================== -->
     <node name="auto_charge_node"
           pkg="reicoures_relocalization"
           type="auto_charge_node"
@@ -50,9 +67,68 @@
           respawn_delay="2"/>
 
 
-    <!-- ================================================ -->
-    <!-- 任务调度节点 -->
-    <!-- ================================================ -->
+    <!-- ================================================== -->
+    <!-- 任务三：手机/书包目标检测 -->
+    <!-- 明确使用仿真机器人 Berxel 摄像头：
+         /berxel_base/color/image_raw
+    -->
+    <!-- 完全不使用电脑摄像头 -->
+    <!-- ================================================== -->
+    <node name="task3_detector"
+          pkg="task3_vision"
+          type="task3_detector.py"
+          output="screen"
+          respawn="true"
+          respawn_delay="2">
+
+        <param name="model_path"
+               value="/home/reicom2025/bobac3_ws/src/model/best.pt"/>
+
+        <param name="image_topic"
+               value="/berxel_base/color/image_raw"/>
+
+        <param name="conf"
+               value="0.25"/>
+
+        <param name="imgsz"
+               value="640"/>
+
+        <param name="max_fps"
+               value="10.0"/>
+
+        <!-- 第一帧YOLO成功后，再正式计算这1.5秒 -->
+        <param name="detect_seconds"
+               value="1.5"/>
+
+        <!-- 某类别至少命中3帧才认为存在 -->
+        <param name="min_hit_frames"
+               value="3"/>
+
+        <!-- detector内部保护；不改变正常1.5秒识别 -->
+        <param name="internal_timeout"
+               value="8.0"/>
+
+        <!-- 持续显示机器人第一视角 -->
+        <param name="show_window"
+               value="true"/>
+
+        <!--
+        如果启动日志里的 model.names 不能自动匹配，
+        再按实际ID解除注释：
+
+        <param name="phone_class_id"
+               value="0"/>
+
+        <param name="backpack_class_id"
+               value="1"/>
+        -->
+
+    </node>
+
+
+    <!-- ================================================== -->
+    <!-- 任务调度器最后启动 -->
+    <!-- ================================================== -->
     <node name="task_scheduler_node"
           pkg="task_scheduler"
           type="task_scheduler_node"
