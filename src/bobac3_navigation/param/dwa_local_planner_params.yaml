@@ -36,8 +36,8 @@ DWAPlannerROS:
   sim_time: 1.5       # 1.7
   sim_granularity: 0.025
   angular_sim_granularity: 0.2
-  vx_samples: 6       # 3
-  vy_samples: 3       # diff drive robot, there is only one sample
+  vx_samples: 6       #6 # 3
+  vy_samples: 3       #3 # diff drive robot, there is only one sample
   vtheta_samples: 20  # 20
 
 # Trajectory Scoring Parameters
@@ -45,9 +45,9 @@ DWAPlannerROS:
 #   path_distance_bias * (distance to path from the endpoint of the trajectory in meters)
 #   + goal_distance_bias * (distance to local goal from the endpoint of the trajectory in meters)
 #   + occdist_scale * (maximum obstacle cost along the trajectory in obstacle cost (0-254))
-  path_distance_bias: 100.0      # 32.0   - weighting for how much it should stick to the global path plan
-  goal_distance_bias: 24.0      # 24.0   - wighting for how much it should attempt to reach its goal
-  occdist_scale: 400            # 0.01   控制器尝试避免障碍物的权重
+  path_distance_bias: 50.0      # 32.0   - weighting for how much it should stick to the global path plan
+  goal_distance_bias: 15.0      # 24.0   - wighting for how much it should attempt to reach its goal
+  occdist_scale: 100            # 0.01   控制器尝试避免障碍物的权重
 
   forward_point_distance: 0.4 # 0.325  从机器人中心点到另一个得分点的距离 
   # path_distance_bias: 50.0      # 32.0/10.0   - weighting for how much it should stick to the global path plan

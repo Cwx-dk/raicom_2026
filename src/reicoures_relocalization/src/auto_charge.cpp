@@ -162,8 +162,6 @@ bool navToGoal(double x, double y, double z, double w) {
     ROS_INFO("等待连接 move_base 服务器...");
     nav_client->waitForServer();
     ROS_INFO("连接成功！");
-    nav_client->cancelAllGoals();
-    ROS_WARN("已清空所有导航任务！");
     
     move_base_msgs::MoveBaseGoal goal;
     goal.target_pose.header.frame_id = "map";

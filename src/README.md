@@ -24,3 +24,5 @@ rosrun reicoures_relocalization auto_charge_node
 rosrun task_scheduler task_scheduler_node -->
 
 roslaunch task_scheduler test.launch
+
+roslaunch bobac3_navigation demo_nav_2d.launch

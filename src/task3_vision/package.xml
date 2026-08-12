@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>task3_vision</name>
+  <version>0.0.1</version>
+  <description>Task 3 phone/backpack detector for bobac3 robot camera.</description>
+
+  <maintainer email="reicom2025@todo.todo">reicom2025</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <depend>rospy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>cv_bridge</depend>
+</package>
