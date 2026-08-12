@@ -286,6 +286,7 @@ public:
         const double ANGLE_NEG_90 = -M_PI / 2.0;  // -90度（朝南）
         
         route_ = {
+
             {
                 "餐厅",
                 2.220,
@@ -293,6 +294,7 @@ public:
                 ANGLE_0,        // 0度（朝东）
                 "这里是餐厅"
             },
+
             {
                 "厨房",
                 1.251,
@@ -300,6 +302,7 @@ public:
                 ANGLE_90,       // 90度（朝北）
                 "这里是厨房"
             },
+
             {
                 "客厅",
                 1.267,
@@ -307,6 +310,7 @@ public:
                 ANGLE_NEG_90,   // -90度（朝南）
                 "这里是客厅"
             },
+
             {
                 "卧室",
                 2.252,
@@ -1255,35 +1259,47 @@ public:
             LOBBY_Y
         );
 
+
         geometry_msgs::PoseStamped goal;
 
-        goal.header.frame_id = "map";
-        goal.header.stamp = ros::Time::now();
 
-        goal.pose.position.x = LOBBY_X;
-        goal.pose.position.y = LOBBY_Y;
-        goal.pose.position.z = 0.0;
+        goal.header.frame_id =
+            "map";
 
-        // =====================================================
-        // 🔧 走廊固定朝向：-90度（朝南）
-        // yaw = -1.5708 rad
-        // 四元数: z = sin(-90°/2) = sin(-45°) = -0.7071
-        //         w = cos(-90°/2) = cos(-45°) = 0.7071
-        // =====================================================
-        
-        const double LOBBY_YAW = -M_PI / 2.0;  // -90度
-        
-        goal.pose.orientation.x = 0.0;
-        goal.pose.orientation.y = 0.0;
-        goal.pose.orientation.z = std::sin(LOBBY_YAW / 2.0);  // -0.7071
-        goal.pose.orientation.w = std::cos(LOBBY_YAW / 2.0);  // 0.7071
+        goal.header.stamp =
+            ros::Time::now();
 
-        goal_pub_.publish(goal);
+
+        goal.pose.position.x =
+            LOBBY_X;
+
+        goal.pose.position.y =
+            LOBBY_Y;
+
+        goal.pose.position.z =
+            0.0;
+
+
+        goal.pose.orientation.x =
+            0.0;
+
+        goal.pose.orientation.y =
+            0.0;
+
+        goal.pose.orientation.z =
+            0.0;
+
+        goal.pose.orientation.w =
+            1.0;
+
+
+        goal_pub_.publish(
+            goal
+        );
+
 
         ROS_INFO(
-            "📤 走廊目标已发布: yaw=%.3f rad (%.1f°)",
-            LOBBY_YAW,
-            LOBBY_YAW * 180.0 / M_PI
+            "📤 走廊目标已发布到 /nav_goal"
         );
     }
 

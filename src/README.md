@@ -8,6 +8,9 @@ roslaunch bobac3_navigation demo_nav_2d.launch map_file_name:=reimap
 roslaunch relative_move relative_move.launch   开启相对移动服务
 roslaunch ar_pose ar_base_sim.launch   开启二次定位服务
 
+source ./devel/setup.bash
+
+
 rqt_image_view  使用ROS图像可视化工具查看相机
 
 <!-- rosrun voice_pkg voice_recognition.py
