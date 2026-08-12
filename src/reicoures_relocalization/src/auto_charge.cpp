@@ -42,7 +42,7 @@ const int AR_ID = 0;
 const double AR_DIST = 0.4;
 const double REL_MOVE_FORWARD = -0.18;
 const double REL_MOVE_BACK = 0.18;
-const int CHARGE_DURATION_SECONDS = 10;
+const int CHARGE_DURATION_SECONDS = 30;
 
 // =========================================================
 // 🔥 新增：导航重试参数
