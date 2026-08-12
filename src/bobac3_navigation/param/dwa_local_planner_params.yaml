@@ -50,9 +50,9 @@ DWAPlannerROS:
   # occdist_scale: 400            # 0.01   控制器尝试避免障碍物的权重
 
   # forward_point_distance: 0.4 # 0.325  从机器人中心点到另一个得分点的距离 
-  path_distance_bias: 10.0      # 32.0/10.0   - weighting for how much it should stick to the global path plan
-  goal_distance_bias: 16.5    # 24.0   - wighting for how much it should attempt to reach its goal
-  occdist_scale: 159           # 0.01   控制器尝试避免障碍物的权重
+  path_distance_bias: 40.0      # 32.0/10.0   - weighting for how much it should stick to the global path plan
+  goal_distance_bias: 15.0  # 24.0   - wighting for how much it should attempt to reach its goal
+  occdist_scale: 10          # 0.01   控制器尝试避免障碍物的权重
 
   forward_point_distance: 0.1 # 0.325  从机器人中心点到另一个得分点的距离 
 
