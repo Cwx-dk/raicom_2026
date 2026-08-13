@@ -37,7 +37,7 @@ class Task3Detector:
         # 不使用电脑摄像头，不使用 cv2.VideoCapture(0)
         self.image_topic = rospy.get_param(
             "~image_topic",
-            "/berxel_base/color/image_raw"
+            "/top_camera/image_raw"
         )
 
         self.conf = float(

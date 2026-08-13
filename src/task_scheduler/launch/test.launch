@@ -10,16 +10,20 @@
           respawn="true"
           respawn_delay="2">
 
+        <!-- -1 = 使用当前电脑系统默认输入麦克风 -->
         <param name="device_index" value="-1"/>
 
+        <!-- Google Speech Recognition 代理 -->
         <env name="http_proxy"  value="http://192.168.103.101:7890"/>
         <env name="https_proxy" value="http://192.168.103.101:7890"/>
         <env name="HTTP_PROXY"  value="http://192.168.103.101:7890"/>
         <env name="HTTPS_PROXY" value="http://192.168.103.101:7890"/>
 
+        <!-- ROS 本机通信不走代理 -->
         <env name="no_proxy"  value="localhost,127.0.0.1,::1"/>
         <env name="NO_PROXY" value="localhost,127.0.0.1,::1"/>
 
+        <!-- 清掉旧代理 -->
         <env name="ALL_PROXY" value=""/>
         <env name="all_proxy" value=""/>
         <env name="ftp_proxy" value=""/>
@@ -27,7 +31,10 @@
 
     </node>
 
+
+    <!-- ================================================== -->
     <!-- 人脸唤醒 -->
+    <!-- ================================================== -->
     <node name="face_node"
           pkg="yolo_face"
           type="face_node.py"
@@ -35,7 +42,10 @@
           respawn="true"
           respawn_delay="2"/>
 
+
+    <!-- ================================================== -->
     <!-- /nav_goal -> move_base -->
+    <!-- ================================================== -->
     <node name="nav_goal_node"
           pkg="reicoures_nav"
           type="nav_goal_node"
@@ -43,13 +53,18 @@
           respawn="true"
           respawn_delay="2"/>
 
+
     <!-- ================================================== -->
     <!-- 充电所需服务 -->
     <!-- ================================================== -->
     <include file="$(find relative_move)/launch/relative_move.launch"/>
+
     <include file="$(find ar_pose)/launch/ar_base_sim.launch"/>
 
-    <!-- 自动充电控制节点 -->
+
+    <!-- ================================================== -->
+    <!-- 自动充电 -->
+    <!-- ================================================== -->
     <node name="auto_charge_node"
           pkg="reicoures_relocalization"
           type="auto_charge_node"
@@ -57,8 +72,10 @@
           respawn="true"
           respawn_delay="2"/>
 
+
     <!-- ================================================== -->
-    <!-- 任务三目标检测（找手机/书包） -->
+    <!-- 任务三：手机 / 书包 -->
+    <!-- 官方 top_camera -->
     <!-- ================================================== -->
     <node name="task3_detector"
           pkg="task3_vision"
@@ -70,51 +87,55 @@
         <param name="model_path"
                value="/home/reicom2025/bobac3_ws/src/model/best.pt"/>
 
+        <!-- 关键：从 Berxel 切换为官方 top_camera -->
         <param name="image_topic"
-               value="/berxel_base/color/image_raw"/>
+               value="/top_camera/image_raw"/>
 
-        <param name="conf" value="0.25"/>
-        <param name="imgsz" value="640"/>
-        <param name="max_fps" value="10.0"/>
-        <param name="detect_seconds" value="1.5"/>
-        <param name="min_hit_frames" value="3"/>
-        <param name="show_window" value="true"/>
+        <param name="conf"
+               value="0.25"/>
+
+        <param name="imgsz"
+               value="640"/>
+
+        <param name="max_fps"
+               value="10.0"/>
+
+        <param name="detect_seconds"
+               value="1.5"/>
+
+        <param name="min_hit_frames"
+               value="3"/>
+
+        <param name="internal_timeout"
+               value="8.0"/>
+
+        <param name="show_window"
+               value="true"/>
+
+        <!--
+        如果模型类别名不能自动匹配再手动设置：
+
+        <param name="phone_class_id" value="0"/>
+        <param name="backpack_class_id" value="1"/>
+        -->
 
     </node>
 
-    <!-- ================================================== -->
-    <!-- 任务二食材识别（推荐菜） -->
-    <!-- ================================================== -->
-    <node name="task2_detector"
-          pkg="task_scheduler"                         
-          type="task2_detector.py"
-          output="screen"
-          respawn="true"
-          respawn_delay="2">
-
-        <param name="model_path"
-               value="/home/reicom2025/bobac3_ws/src/model/best.pt"/>
-
-        <param name="image_topic"
-               value="/berxel_base/color/image_raw"/>
-
-        <param name="conf" value="0.25"/>
-        <param name="imgsz" value="640"/>
-        <param name="max_fps" value="10.0"/>
-        <param name="detect_seconds" value="1.5"/>
-        <param name="min_hit_frames" value="3"/>
-        <param name="show_window" value="true"/>
-
-    </node>
 
     <!-- ================================================== -->
-    <!-- 任务调度器（放最后启动） -->
+    <!-- 调度器最后启动 -->
     <!-- ================================================== -->
     <node name="task_scheduler_node"
           pkg="task_scheduler"
           type="task_scheduler_node"
           output="screen"
           respawn="true"
-          respawn_delay="2"/>
+          respawn_delay="2">
+
+        <!-- 当前 move_base 的 DWA namespace -->
+        <param name="dwa_namespace"
+               value="/move_base_node/DWAPlannerROS"/>
+
+    </node>
 
 </launch>

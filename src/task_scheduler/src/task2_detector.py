@@ -41,7 +41,7 @@ class Task2Detector:
 
         self.model_path = rospy.get_param(
             "~model_path",
-            "/home/reicom2025/bobac3_ws/src/model/best.pt"
+            "/home/reicom2025/bobac3_ws/src/model/best2.pt"
         )
 
         # 使用仿真机器人的 Berxel 摄像头
@@ -141,7 +141,7 @@ class Task2Detector:
             "tofu": "豆腐",
             "egg": "鸡蛋",
             "meat": "猪肉",
-            # 如果还有第14类，在这里添加
+            "eggplant": "茄子"
         }
 
         # 反向映射：中文名 -> 英文名（用于输出）
