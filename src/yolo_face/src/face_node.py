@@ -1,69 +1,122 @@
 #!/usr/bin/env python3
-import sys
-import rospy
-import cv2
-import pickle
+# -*- coding: utf-8 -*-
+
+"""
+人脸识别节点：保持“识别算法启停”和“摄像头开关”完全分离。
+
+最终行为：
+1. 节点启动时打开人脸摄像头，并在整个节点生命周期内保持打开。
+2. /face_detection_enable=true：
+   执行 YOLO + InsightFace 人脸识别。
+3. 检测到人脸后：
+   发布 /face_detected=true，并停止继续进行人脸识别算法。
+4. /face_detection_enable=false：
+   只停止人脸识别算法；摄像头仍持续读取并显示实时画面。
+5. 只有整个节点真正退出时才 release 人脸摄像头。
+6. 任务二使用另一台独立现实摄像头，本节点完全不管理任务二摄像头。
+"""
+
 import os
-import numpy as np
-import threading
-import queue
 import time
+import pickle
+import warnings
+
+import cv2
+import numpy as np
+import rospy
+from PIL import Image, ImageDraw, ImageFont
+from std_msgs.msg import String, Bool
 from ultralytics import YOLO
 import insightface
-from std_msgs.msg import String, Bool
-from PIL import Image, ImageDraw, ImageFont
-import warnings
-warnings.filterwarnings('ignore')
+
+warnings.filterwarnings("ignore")
 
 
 class FaceRecognizerNode:
+
     def __init__(self):
+
         rospy.init_node(
-            'face_recognizer_node',
-            anonymous=True,
+            "face_recognizer_node",
+            anonymous=False,
             disable_signals=True
         )
 
-        package_path = '/home/reicom2025/bobac3_ws/src/yolo_face'
-        model_dir = os.path.join(package_path, 'model')
-
-        # 加载 YOLO 模型
-        print("加载 YOLO...", flush=True)
-        det_model_path = os.path.join(
-            model_dir,
-            'face_yolov8n.pt'
-        )
-        self.detector = YOLO(det_model_path)
-
-        # 加载 InsightFace 识别器
-        print("加载 InsightFace...", flush=True)
-        self.recognizer = insightface.app.FaceAnalysis(
-            name='buffalo_l'
+        self.package_path = (
+            "/home/reicom2025/bobac3_ws/src/yolo_face"
         )
 
-        # 使用 CPU，检测尺寸减小以提高速度
+        model_dir = os.path.join(
+            self.package_path,
+            "model"
+        )
+
+        # =====================================================
+        # 参数
+        # =====================================================
+
+        self.camera_index = int(
+            rospy.get_param(
+                "~camera_index",
+                0
+            )
+        )
+
+        # =====================================================
+        # 模型
+        # =====================================================
+
+        rospy.loginfo(
+            "👤 加载人脸YOLO..."
+        )
+
+        self.detector = YOLO(
+            os.path.join(
+                model_dir,
+                "face_yolov8n.pt"
+            )
+        )
+
+        rospy.loginfo(
+            "👤 加载InsightFace..."
+        )
+
+        self.recognizer = (
+            insightface
+            .app
+            .FaceAnalysis(
+                name="buffalo_l"
+            )
+        )
+
         self.recognizer.prepare(
             ctx_id=-1,
             det_size=(320, 320)
         )
 
-        # 加载人脸数据库
-        print("加载数据库...", flush=True)
-
         db_path = os.path.join(
             model_dir,
-            'face_database.pkl'
+            "face_database.pkl"
         )
 
-        with open(db_path, 'rb') as f:
-            self.face_database = pickle.load(f)
+        with open(
+            db_path,
+            "rb"
+        ) as f:
+
+            self.face_database = (
+                pickle.load(f)
+            )
 
         rospy.loginfo(
-            f"已加载 {len(self.face_database)} 个身份"
+            "✅ 已加载 %d 个人脸身份",
+            len(
+                self.face_database
+            )
         )
 
         # =====================================================
-        # ROS 通信
+        # ROS
         # =====================================================
 
         self.face_pub = rospy.Publisher(
@@ -78,15 +131,9 @@ class FaceRecognizerNode:
             queue_size=10
         )
 
-        # =====================================================
-        # 人脸检测启停控制
-        # =====================================================
-
-        # 默认关闭。
-        # 只有 task_scheduler 到达走廊后才允许进行人脸检测。
         self.face_detection_enabled = False
 
-        self.face_detection_control_sub = rospy.Subscriber(
+        self.control_sub = rospy.Subscriber(
             "/face_detection_enable",
             Bool,
             self.face_detection_control_callback,
@@ -94,101 +141,200 @@ class FaceRecognizerNode:
         )
 
         # =====================================================
-        # 摄像头
+        # 人脸现实摄像头
+        #
+        # 关键：
+        # 节点启动时打开一次。
+        # 之后不随 /face_detection_enable 开关而关闭。
         # =====================================================
 
-        print("摄像头初始化...", flush=True)
+        self.cap = None
+        self.last_camera_open_try = 0.0
 
-        self.cap = cv2.VideoCapture(0)
+        if not self.open_camera():
+            raise RuntimeError(
+                "无法打开人脸识别现实摄像头 index={}".format(
+                    self.camera_index
+                )
+            )
 
-        if not self.cap.isOpened():
-            rospy.logerr("无法打开摄像头！")
-            exit(1)
+        # =====================================================
+        # 状态
+        # =====================================================
 
-        # 设置摄像头参数
-        self.cap.set(
+        self.last_processed_frame = None
+
+        self.last_result = {
+            "name": "Unknown",
+            "confidence": 0.0,
+            "bbox": None
+        }
+
+        self.last_publish_time = 0.0
+        self.publish_cooldown = 2.0
+
+        self.threshold = 0.25
+
+        self.frame_count = 0
+        self.process_interval = 2
+
+        self.load_chinese_font()
+
+        rospy.on_shutdown(
+            self.shutdown
+        )
+
+        rospy.loginfo(
+            "✅ face_node 已启动；人脸摄像头保持实时画面，识别算法默认关闭"
+        )
+
+
+    # =========================================================
+    # 摄像头
+    # =========================================================
+
+    def open_camera(
+        self
+    ):
+
+        if (
+            self.cap is not None
+            and
+            self.cap.isOpened()
+        ):
+            return True
+
+        now = time.monotonic()
+
+        if (
+            now
+            -
+            self.last_camera_open_try
+            <
+            0.5
+        ):
+            return False
+
+        self.last_camera_open_try = now
+
+        rospy.loginfo(
+            "📷 人脸节点打开现实摄像头 index=%d",
+            self.camera_index
+        )
+
+        cap = cv2.VideoCapture(
+            self.camera_index,
+            cv2.CAP_V4L2
+        )
+
+        if not cap.isOpened():
+
+            cap.release()
+
+            cap = cv2.VideoCapture(
+                self.camera_index
+            )
+
+        if not cap.isOpened():
+
+            cap.release()
+
+            rospy.logwarn_throttle(
+                2.0,
+                "⚠️ 人脸节点暂时无法打开现实摄像头"
+            )
+
+            return False
+
+        cap.set(
             cv2.CAP_PROP_FRAME_WIDTH,
             640
         )
 
-        self.cap.set(
+        cap.set(
             cv2.CAP_PROP_FRAME_HEIGHT,
             480
         )
 
-        self.cap.set(
+        cap.set(
             cv2.CAP_PROP_FPS,
             30
         )
 
-        # =====================================================
-        # 状态管理
-        # =====================================================
-
-        self.last_processed_frame = None
-        self.current_name = "Unknown"
-        self.current_confidence = 0.0
-        self.last_published_name = None
-        self.last_publish_time = 0
-
-        # 发布间隔（秒）
-        self.publish_cooldown = 2.0
-
-        # =====================================================
-        # 识别结果缓存（用于显示）
-        # =====================================================
-
-        self.last_result = {
-            'name': 'Unknown',
-            'confidence': 0.0,
-            'bbox': None
-        }
-
-        # 加载中文字体
-        self.load_chinese_font()
-
-        self.threshold = 0.25
-
-        # 帧率控制
-        self.frame_count = 0
-
-        # 每2帧处理一次（可调整：1-5）
-        self.process_interval = 2
+        self.cap = cap
 
         rospy.loginfo(
-            "✅ 人脸识别节点初始化完成"
+            "✅ 人脸节点获得现实摄像头"
         )
 
-        self.run()
+        return True
+
+
+    def close_camera(
+        self
+    ):
+
+        if self.cap is not None:
+
+            try:
+                self.cap.release()
+            except Exception:
+                pass
+
+            self.cap = None
+
+            rospy.loginfo(
+                "🔓 人脸节点已释放现实摄像头"
+            )
+
+        try:
+            cv2.destroyWindow(
+                "Face Recognition"
+            )
+        except Exception:
+            pass
 
 
     # =========================================================
-    # 人脸检测启停控制
+    # 控制
     # =========================================================
 
-    def face_detection_control_callback(self, msg):
-        """由 task_scheduler 控制当前是否允许人脸检测"""
+    def face_detection_control_callback(
+        self,
+        msg
+    ):
 
-        self.face_detection_enabled = msg.data
+        self.face_detection_enabled = (
+            msg.data
+        )
 
         if msg.data:
 
-            # 每次重新进入人脸阶段时，
-            # 允许立即触发
-            self.last_publish_time = 0
+            self.last_publish_time = 0.0
 
             rospy.loginfo(
-                "👤 收到控制命令：开启人脸检测"
+                "👤 收到命令：开启人脸检测"
             )
 
         else:
 
+            # 这里只暂停识别算法。
+            # 不 release，不关闭窗口。
+            self.last_processed_frame = None
+
             rospy.loginfo(
-                "⏸️ 收到控制命令：暂停人脸检测"
+                "⏸️ 收到命令：暂停人脸识别；摄像头画面继续实时显示"
             )
 
 
-    def load_chinese_font(self):
+    # =========================================================
+    # 字体
+    # =========================================================
+
+    def load_chinese_font(
+        self
+    ):
+
         font_paths = [
             "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
             "/usr/share/fonts/truetype/arphic/uming.ttc",
@@ -199,30 +345,49 @@ class FaceRecognizerNode:
 
         for path in font_paths:
 
-            if os.path.exists(path):
+            if not os.path.exists(
+                path
+            ):
+                continue
 
-                try:
+            try:
 
-                    self.font = ImageFont.truetype(
+                self.font = (
+                    ImageFont
+                    .truetype(
                         path,
                         24
                     )
+                )
 
-                    return
+                return
 
-                except:
+            except Exception:
 
-                    continue
+                pass
 
-        self.font = ImageFont.load_default()
+        self.font = (
+            ImageFont
+            .load_default()
+        )
 
 
-    def match_face(self, embedding):
+    # =========================================================
+    # 人脸匹配
+    # =========================================================
+
+    def match_face(
+        self,
+        embedding
+    ):
 
         best_name = "Unknown"
-        best_score = -1
+        best_score = -1.0
 
-        for name, db_embedding in self.face_database.items():
+        for (
+            name,
+            db_embedding
+        ) in self.face_database.items():
 
             score = np.dot(
                 embedding,
@@ -236,9 +401,15 @@ class FaceRecognizerNode:
 
         if best_score < self.threshold:
 
-            return "Unknown", best_score
+            return (
+                "Unknown",
+                best_score
+            )
 
-        return best_name, best_score
+        return (
+            best_name,
+            best_score
+        )
 
 
     def draw_chinese_text(
@@ -270,48 +441,54 @@ class FaceRecognizerNode:
         )
 
         return cv2.cvtColor(
-            np.array(pil_img),
+            np.array(
+                pil_img
+            ),
             cv2.COLOR_RGB2BGR
         )
 
 
-    def process_frame(self, frame):
-        """同步处理单帧（稳定可靠）"""
+    # =========================================================
+    # 单帧人脸
+    # =========================================================
 
-        # =====================================================
-        # 当前不处于 WAITING_FACE 阶段时：
-        # 不运行 YOLO，也不运行 InsightFace。
-        # =====================================================
+    def process_frame(
+        self,
+        frame
+    ):
 
         if not self.face_detection_enabled:
 
             return frame.copy()
 
-        # 缩小图像以提高处理速度
-        height, width = frame.shape[:2]
+        height, width = (
+            frame.shape[:2]
+        )
 
         if width > 640:
 
-            scale = 640 / width
-
-            new_width = 640
-
-            new_height = int(
-                height * scale
+            scale = (
+                640.0
+                /
+                width
             )
 
             process_frame = cv2.resize(
                 frame,
-                (new_width, new_height)
+                (
+                    640,
+                    int(
+                        height
+                        *
+                        scale
+                    )
+                )
             )
 
         else:
 
             process_frame = frame.copy()
 
-        # =====================================================
-        # YOLO检测
-        # =====================================================
 
         results = self.detector(
             process_frame,
@@ -320,365 +497,472 @@ class FaceRecognizerNode:
             verbose=False
         )
 
+
         detected_name = "Unknown"
         detected_confidence = 0.0
         face_found = False
 
+
         for result in results:
 
-            if result.boxes is not None:
+            if (
+                result.boxes
+                is
+                None
+            ):
+                continue
 
-                # 按面积排序，只处理最大的人脸
-                boxes = result.boxes
+            boxes = result.boxes
 
-                areas = []
+            areas = []
 
-                for box in boxes:
+            for box in boxes:
 
-                    x1, y1, x2, y2 = map(
-                        int,
-                        box.xyxy[0]
+                x1, y1, x2, y2 = map(
+                    int,
+                    box.xyxy[
+                        0
+                    ].tolist()
+                )
+
+                areas.append(
+                    (
+                        x2 - x1
                     )
-
-                    areas.append(
-                        (x2 - x1)
-                        *
-                        (y2 - y1)
+                    *
+                    (
+                        y2 - y1
                     )
+                )
 
-                if areas:
 
-                    face_found = True
+            if not areas:
+                continue
 
-                    # 只处理最大的人脸
-                    max_idx = np.argmax(
-                        areas
+
+            face_found = True
+
+            max_idx = int(
+                np.argmax(
+                    areas
+                )
+            )
+
+            box = boxes[
+                max_idx
+            ]
+
+            x1, y1, x2, y2 = map(
+                int,
+                box.xyxy[
+                    0
+                ].tolist()
+            )
+
+
+            face_img = process_frame[
+                y1:y2,
+                x1:x2
+            ]
+
+
+            if face_img.size <= 0:
+                continue
+
+
+            faces = self.recognizer.get(
+                face_img
+            )
+
+
+            if len(faces) <= 0:
+                continue
+
+
+            embedding = (
+                faces[
+                    0
+                ]
+                .normed_embedding
+            )
+
+
+            (
+                detected_name,
+                detected_confidence
+            ) = self.match_face(
+                embedding
+            )
+
+
+            self.last_result = {
+                "name":
+                    detected_name,
+
+                "confidence":
+                    detected_confidence,
+
+                "bbox":
+                    (
+                        x1,
+                        y1,
+                        x2,
+                        y2
                     )
+            }
 
-                    box = boxes[max_idx]
 
-                    x1, y1, x2, y2 = map(
-                        int,
-                        box.xyxy[0]
-                    )
+            color = (
+                (0, 255, 0)
+                if
+                detected_name
+                !=
+                "Unknown"
+                else
+                (0, 0, 255)
+            )
 
-                    face_img = process_frame[
-                        y1:y2,
-                        x1:x2
-                    ]
 
-                    if face_img.size > 0:
+            cv2.rectangle(
+                process_frame,
+                (x1, y1),
+                (x2, y2),
+                color,
+                2
+            )
 
-                        faces = self.recognizer.get(
-                            face_img
+
+            label = (
+                "{} ({:.2f})".format(
+                    detected_name,
+                    detected_confidence
+                )
+                if
+                detected_name
+                !=
+                "Unknown"
+                else
+                "Unknown"
+            )
+
+
+            process_frame = (
+                self.draw_chinese_text(
+                    process_frame,
+                    label,
+                    (
+                        x1,
+                        max(
+                            0,
+                            y1 - 25
                         )
+                    ),
+                    color
+                )
+            )
 
-                        if len(faces) > 0:
 
-                            embedding = (
-                                faces[0]
-                                .normed_embedding
-                            )
+        current_time = (
+            time.time()
+        )
 
-                            (
-                                detected_name,
-                                detected_confidence
-                            ) = self.match_face(
-                                embedding
-                            )
-
-                            # 更新最新结果
-                            self.last_result['name'] = (
-                                detected_name
-                            )
-
-                            self.last_result['confidence'] = (
-                                detected_confidence
-                            )
-
-                            self.last_result['bbox'] = (
-                                x1,
-                                y1,
-                                x2,
-                                y2
-                            )
-
-                            # 绘制
-                            color = (
-                                (0, 255, 0)
-                                if detected_name != "Unknown"
-                                else (0, 0, 255)
-                            )
-
-                            cv2.rectangle(
-                                process_frame,
-                                (x1, y1),
-                                (x2, y2),
-                                color,
-                                2
-                            )
-
-                            label = (
-                                f"{detected_name} "
-                                f"({detected_confidence:.2f})"
-                                if detected_name != "Unknown"
-                                else "Unknown"
-                            )
-
-                            process_frame = (
-                                self.draw_chinese_text(
-                                    process_frame,
-                                    label,
-                                    (x1, y1 - 25),
-                                    color
-                                )
-                            )
-
-        # =====================================================
-        # 发布结果
-        # =====================================================
-
-        current_time = time.time()
 
         if (
             face_found
-            and self.face_detection_enabled
-            and current_time
-            - self.last_publish_time
-            > self.publish_cooldown
+            and
+            self.face_detection_enabled
+            and
+            current_time
+            -
+            self.last_publish_time
+            >
+            self.publish_cooldown
         ):
 
-            # =================================================
-            # 一轮交互只需要一次人脸触发。
-            # 先关闭，防止连续多次发布。
-            # =================================================
-
+            # 一轮只触发一次
             self.face_detection_enabled = False
 
+
             self.face_detected_pub.publish(
-                Bool(data=True)
+                Bool(
+                    data=True
+                )
             )
+
 
             rospy.loginfo(
-                "👤 检测到人脸，发布 "
-                "/face_detected = true"
+                "👤 检测到人脸，发布 /face_detected=true"
             )
 
-            rospy.loginfo(
-                "⏸️ 本轮人脸触发完成，暂停人脸检测"
-            )
 
-            # 身份识别信息继续保留
-            if detected_name != "Unknown":
+            if (
+                detected_name
+                !=
+                "Unknown"
+            ):
 
-                msg = (
-                    f"{detected_name}|"
-                    f"{detected_confidence:.3f}"
+                msg = "{}|{:.3f}".format(
+                    detected_name,
+                    detected_confidence
                 )
 
                 self.face_pub.publish(
-                    msg
+                    String(
+                        data=msg
+                    )
                 )
 
-                rospy.loginfo(
-                    f"🔔 身份识别结果: {msg}"
-                )
-
-            else:
-
-                rospy.loginfo(
-                    "👤 检测到陌生人脸，"
-                    "身份为 Unknown"
-                )
 
             self.last_publish_time = (
                 current_time
             )
 
+
         return process_frame
 
 
-    def run(self):
-        """主循环"""
+    # =========================================================
+    # 主循环
+    # =========================================================
 
-        frame_count = 0
+    def run(
+        self
+    ):
+
         fps_counter = 0
         fps_time = time.time()
         current_fps = 0
 
         rospy.loginfo(
-            "🔄 开始人脸识别循环..."
+            "🔄 开始人脸摄像头实时循环..."
         )
 
         while not rospy.is_shutdown():
 
-            ret, frame = self.cap.read()
+            # -------------------------------------------------
+            # 摄像头始终保持打开、始终读帧。
+            # /face_detection_enable 只决定是否运行识别算法。
+            # -------------------------------------------------
+
+            if (
+                self.cap is None
+                or
+                not self.cap.isOpened()
+            ):
+
+                # 仅用于设备异常恢复；正常任务切换不会走这里。
+                if not self.open_camera():
+
+                    rospy.logwarn_throttle(
+                        2.0,
+                        "⚠️ 人脸摄像头当前不可用，继续等待..."
+                    )
+
+                    time.sleep(
+                        0.1
+                    )
+
+                    continue
+
+
+            ret, frame = (
+                self.cap.read()
+            )
+
 
             if not ret:
 
-                rospy.logwarn(
-                    "摄像头读取失败，重试..."
+                rospy.logwarn_throttle(
+                    2.0,
+                    "⚠️ 人脸摄像头读取失败，摄像头不关闭，继续重试..."
                 )
 
-                time.sleep(0.1)
+                time.sleep(
+                    0.1
+                )
 
                 continue
 
-            frame_count += 1
+
+            self.frame_count += 1
             fps_counter += 1
 
-            # 计算FPS
-            if time.time() - fps_time > 1.0:
 
-                current_fps = fps_counter
-
-                fps_counter = 0
-
-                fps_time = time.time()
-
-            # 按间隔处理帧
             if (
-                frame_count
-                % self.process_interval
-                == 0
+                time.time()
+                -
+                fps_time
+                >
+                1.0
             ):
 
-                processed_frame = (
-                    self.process_frame(
-                        frame
-                    )
+                current_fps = (
+                    fps_counter
                 )
 
-                self.last_processed_frame = (
-                    processed_frame.copy()
-                )
+                fps_counter = 0
+                fps_time = time.time()
 
-            else:
+
+            # -------------------------------------------------
+            # 开启状态：跑人脸识别
+            # 关闭状态：不跑算法，只显示原始实时画面
+            # -------------------------------------------------
+
+            if self.face_detection_enabled:
 
                 if (
-                    self.last_processed_frame
-                    is not None
+                    self.frame_count
+                    %
+                    self.process_interval
+                    ==
+                    0
                 ):
 
                     processed_frame = (
-                        self.last_processed_frame
-                        .copy()
+                        self.process_frame(
+                            frame
+                        )
+                    )
+
+                    self.last_processed_frame = (
+                        processed_frame.copy()
                     )
 
                 else:
 
-                    processed_frame = cv2.resize(
-                        frame,
-                        (640, 480)
-                    )
+                    if (
+                        self.last_processed_frame
+                        is not None
+                    ):
 
-                    cv2.putText(
-                        processed_frame,
-                        "Processing...",
-                        (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7,
-                        (0, 255, 255),
-                        2
-                    )
+                        processed_frame = (
+                            self.last_processed_frame.copy()
+                        )
 
-            # 显示FPS
+                    else:
+
+                        processed_frame = (
+                            frame.copy()
+                        )
+
+            else:
+
+                processed_frame = (
+                    frame.copy()
+                )
+
+                # 防止暂停后仍显示上一轮人脸框
+                self.last_processed_frame = None
+
+
             cv2.putText(
                 processed_frame,
-                f"FPS: {current_fps}",
-                (10, 30),
+                "FPS: {}".format(
+                    current_fps
+                ),
+                (
+                    10,
+                    30
+                ),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.7,
-                (0, 255, 255),
+                (
+                    0,
+                    255,
+                    255
+                ),
                 2
             )
 
-            # 显示当前识别状态
-            status_text = (
-                f"Status: "
-                f"{self.last_result['name']}"
-            )
+
+            if self.face_detection_enabled:
+
+                mode_text = (
+                    "Face Detection: ON"
+                )
+
+                mode_color = (
+                    0,
+                    255,
+                    0
+                )
+
+            else:
+
+                mode_text = (
+                    "Face Detection: OFF - Camera Live"
+                )
+
+                mode_color = (
+                    0,
+                    255,
+                    255
+                )
+
 
             cv2.putText(
                 processed_frame,
-                status_text,
-                (10, 60),
+                mode_text,
+                (
+                    10,
+                    60
+                ),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                (255, 255, 255),
+                0.58,
+                mode_color,
                 2
             )
 
-            # 显示处理间隔
-            interval_text = (
-                f"Process every "
-                f"{self.process_interval} frames"
-            )
-
-            cv2.putText(
-                processed_frame,
-                interval_text,
-                (10, 90),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (200, 200, 200),
-                1
-            )
-
-            # 显示画面
-            display_frame = cv2.resize(
-                processed_frame,
-                (640, 480)
-            )
 
             cv2.imshow(
                 "Face Recognition",
-                display_frame
+                cv2.resize(
+                    processed_frame,
+                    (
+                        640,
+                        480
+                    )
+                )
             )
 
-            key = cv2.waitKey(1) & 0xFF
 
-            if key == ord('q'):
+            key = (
+                cv2.waitKey(
+                    1
+                )
+                &
+                0xFF
+            )
 
-                rospy.loginfo(
-                    "用户退出"
+
+            if key == ord("q"):
+
+                rospy.signal_shutdown(
+                    "User pressed q"
                 )
 
                 break
 
-            elif (
-                key == ord('+')
-                or key == ord('=')
-            ):
 
-                self.process_interval = max(
-                    1,
-                    self.process_interval - 1
-                )
+        self.shutdown()
 
-                rospy.loginfo(
-                    f"处理间隔: 每 "
-                    f"{self.process_interval} 帧"
-                )
 
-            elif key == ord('-'):
+    def shutdown(
+        self
+    ):
 
-                self.process_interval = min(
-                    10,
-                    self.process_interval + 1
-                )
+        self.face_detection_enabled = False
 
-                rospy.loginfo(
-                    f"处理间隔: 每 "
-                    f"{self.process_interval} 帧"
-                )
+        self.close_camera()
 
-        self.cap.release()
-
-        cv2.destroyAllWindows()
+        try:
+            cv2.destroyAllWindows()
+        except Exception:
+            pass
 
         rospy.loginfo(
-            "👋 节点已停止"
+            "🛑 face_node 已关闭"
         )
 
 
@@ -688,12 +972,13 @@ if __name__ == "__main__":
 
         node = FaceRecognizerNode()
 
+        node.run()
+
     except Exception as e:
 
-        print(
-            f"❌ 初始化失败: {e}"
+        rospy.logerr(
+            "❌ face_node异常: %r",
+            e
         )
 
-        import traceback
-
-        traceback.print_exc()
+        raise

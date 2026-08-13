@@ -10,41 +10,65 @@
           respawn="true"
           respawn_delay="2">
 
-        <!-- -1 = 使用当前电脑系统默认输入麦克风 -->
-        <param name="device_index" value="-1"/>
+        <param name="device_index"
+               value="-1"/>
 
-        <!-- Google Speech Recognition 代理 -->
-        <env name="http_proxy"  value="http://192.168.103.101:7890"/>
-        <env name="https_proxy" value="http://192.168.103.101:7890"/>
-        <env name="HTTP_PROXY"  value="http://192.168.103.101:7890"/>
-        <env name="HTTPS_PROXY" value="http://192.168.103.101:7890"/>
+        <env name="http_proxy"
+             value="http://192.168.103.101:7890"/>
 
-        <!-- ROS 本机通信不走代理 -->
-        <env name="no_proxy"  value="localhost,127.0.0.1,::1"/>
-        <env name="NO_PROXY" value="localhost,127.0.0.1,::1"/>
+        <env name="https_proxy"
+             value="http://192.168.103.101:7890"/>
 
-        <!-- 清掉旧代理 -->
-        <env name="ALL_PROXY" value=""/>
-        <env name="all_proxy" value=""/>
-        <env name="ftp_proxy" value=""/>
-        <env name="FTP_PROXY" value=""/>
+        <env name="HTTP_PROXY"
+             value="http://192.168.103.101:7890"/>
+
+        <env name="HTTPS_PROXY"
+             value="http://192.168.103.101:7890"/>
+
+        <env name="no_proxy"
+             value="localhost,127.0.0.1,::1"/>
+
+        <env name="NO_PROXY"
+             value="localhost,127.0.0.1,::1"/>
+
+        <env name="ALL_PROXY"
+             value=""/>
+
+        <env name="all_proxy"
+             value=""/>
+
+        <env name="ftp_proxy"
+             value=""/>
+
+        <env name="FTP_PROXY"
+             value=""/>
 
     </node>
 
 
     <!-- ================================================== -->
-    <!-- 人脸唤醒 -->
+    <!-- 人脸现实摄像头 -->
+    <!--
+         使用原来第一台现实摄像头。
+         /face_detection_enable 只控制人脸识别算法开关。
+         即使算法 OFF，摄像头画面仍一直实时显示。
+    -->
     <!-- ================================================== -->
     <node name="face_node"
           pkg="yolo_face"
           type="face_node.py"
           output="screen"
           respawn="true"
-          respawn_delay="2"/>
+          respawn_delay="2">
+
+        <param name="camera_index"
+               value="0"/>
+
+    </node>
 
 
     <!-- ================================================== -->
-    <!-- /nav_goal -> move_base -->
+    <!-- 导航 -->
     <!-- ================================================== -->
     <node name="nav_goal_node"
           pkg="reicoures_nav"
@@ -55,16 +79,13 @@
 
 
     <!-- ================================================== -->
-    <!-- 充电所需服务 -->
+    <!-- 充电 -->
     <!-- ================================================== -->
     <include file="$(find relative_move)/launch/relative_move.launch"/>
 
     <include file="$(find ar_pose)/launch/ar_base_sim.launch"/>
 
 
-    <!-- ================================================== -->
-    <!-- 自动充电 -->
-    <!-- ================================================== -->
     <node name="auto_charge_node"
           pkg="reicoures_relocalization"
           type="auto_charge_node"
@@ -74,8 +95,60 @@
 
 
     <!-- ================================================== -->
-    <!-- 任务三：手机 / 书包 -->
-    <!-- 官方 top_camera -->
+    <!-- 任务二：第二台独立现实摄像头 + best2.pt -->
+    <!--
+         第一台现实摄像头：
+             人脸识别，原设备组 /dev/video0~3
+
+         第二台现实摄像头：
+             食材识别，插入后新增 /dev/video4 和 /dev/video5
+
+         task2_food_detector 只检查 /dev/video4、/dev/video5，
+         不碰人脸摄像头。
+         食材摄像头也始终保持实时画面；
+         /task2_detection_enable 只控制 YOLO 是否运行。
+    -->
+    <!-- ================================================== -->
+    <node name="task2_food_detector"
+          pkg="task_scheduler"
+          type="task2_food_detector.py"
+          output="screen"
+          respawn="true"
+          respawn_delay="2">
+
+        <param name="model_path"
+               value="/home/reicom2025/bobac3_ws/src/model/best2.pt"/>
+
+        <param name="recipes_path"
+               value="/home/reicom2025/bobac3_ws/src/task_scheduler/src/recipes.json"/>
+
+        <rosparam param="camera_devices">
+          ["/dev/video4", "/dev/video5"]
+        </rosparam>
+
+        <param name="conf"
+               value="0.25"/>
+
+        <param name="imgsz"
+               value="640"/>
+
+        <param name="show_window"
+               value="true"/>
+
+        <param name="camera_width"
+               value="640"/>
+
+        <param name="camera_height"
+               value="480"/>
+
+        <param name="camera_fps"
+               value="30"/>
+
+    </node>
+
+
+    <!-- ================================================== -->
+    <!-- 任务三：Gazebo 官方 top_camera -->
     <!-- ================================================== -->
     <node name="task3_detector"
           pkg="task3_vision"
@@ -87,7 +160,6 @@
         <param name="model_path"
                value="/home/reicom2025/bobac3_ws/src/model/best.pt"/>
 
-        <!-- 关键：从 Berxel 切换为官方 top_camera -->
         <param name="image_topic"
                value="/top_camera/image_raw"/>
 
@@ -112,13 +184,6 @@
         <param name="show_window"
                value="true"/>
 
-        <!--
-        如果模型类别名不能自动匹配再手动设置：
-
-        <param name="phone_class_id" value="0"/>
-        <param name="backpack_class_id" value="1"/>
-        -->
-
     </node>
 
 
@@ -132,7 +197,6 @@
           respawn="true"
           respawn_delay="2">
 
-        <!-- 当前 move_base 的 DWA namespace -->
         <param name="dwa_namespace"
                value="/move_base_node/DWAPlannerROS"/>
 
