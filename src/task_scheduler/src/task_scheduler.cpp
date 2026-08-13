@@ -1,6 +1,6 @@
 /**
  * @file task_scheduler.cpp
- * @brief 服务机器人任务调度：任务一导览 + 任务三目标寻找
+ * @brief 服务机器人任务调度：任务一导览 + 任务二推荐菜 + 任务三目标寻找
  */
 
 #include <ros/ros.h>
@@ -17,7 +17,29 @@
 #include <mutex>
 #include <cmath>
 #include <clocale>
+#include <fstream>
+#include <sstream>
+#include <jsoncpp/json/json.h>
 
+#include <set>        // 用于 matchRecipe 中的 std::set
+#include <algorithm>  // 用于 std::find
+
+
+// =========================================================
+// Recipe 结构体（菜谱）
+// =========================================================
+
+struct Recipe
+{
+    std::string name;
+    std::vector<std::string> ingredients;
+    std::string steps;
+};
+
+
+// =========================================================
+// Waypoint 结构体（目标点）
+// =========================================================
 
 struct Waypoint
 {
@@ -33,9 +55,17 @@ struct Waypoint
 };
 
 
+// =========================================================
+// TaskScheduler 类
+// =========================================================
+
 class TaskScheduler
 {
 private:
+
+    // =========================================================
+    // 状态枚举
+    // =========================================================
 
     enum class State
     {
@@ -44,6 +74,7 @@ private:
         WAITING_FACE,
         IDLE,
         NAVIGATING,
+        TASK2_DETECTING,
         TASK3_DETECTING,
         WAITING_SPEECH,
         CHARGING,
@@ -56,13 +87,14 @@ private:
     {
         NONE,
         TASK1_GUIDE,
+        TASK2_RECOMMEND_FOOD,
         TASK3_FIND_PHONE,
         TASK3_FIND_BACKPACK
     };
 
 
     // =========================================================
-    // ROS
+    // ROS 通信
     // =========================================================
 
     ros::NodeHandle nh_;
@@ -99,8 +131,33 @@ private:
     std::atomic<bool> voice_command_received_{false};
     std::atomic<bool> face_detected_{false};
 
-    // 当前任务三地点是否已经找到“用户指定的目标”
+    // 任务三：当前地点是否找到目标
     bool task3_target_found_current_ = false;
+
+    // =========================================================
+    // 任务二专用变量
+    // =========================================================
+
+    // 菜谱数据库
+    std::vector<Recipe> recipes_;
+
+    // 识别的食材列表
+    std::vector<std::string> detected_ingredients_;
+
+    // 选中的3种食材
+    std::vector<std::string> selected_ingredients_;
+
+    // 匹配到的菜名
+    std::string matched_dish_name_;
+
+    // 匹配到的做法
+    std::string matched_recipe_;
+
+    // 识别重试计数
+    int detection_retry_count_ = 0;
+
+    // 最大重试次数
+    const int MAX_DETECTION_RETRIES = 3;
 
 
     // =========================================================
@@ -128,10 +185,10 @@ private:
     const int LOOP_RATE_HZ = 10;
     const int IDLE_REMIND_INTERVAL = 30;
 
-    // detector 正常约 1.5 秒返回；10 秒仅作为视觉链路故障保护，不改变1.5秒识别窗口
+    // 任务三检测超时（10秒作为视觉链路故障保护）
     const int TASK3_DETECTION_TIMEOUT_SECONDS = 10;
 
-    // auto_charge 本身含导航、AR定位、30秒充电，60秒容易不够
+    // 充电超时
     const int CHARGE_TIMEOUT_SECONDS = 180;
 
 
@@ -148,6 +205,10 @@ private:
 
 public:
 
+    // =========================================================
+    // 构造函数
+    // =========================================================
+
     TaskScheduler()
     {
         goal_pub_ = nh_.advertise<geometry_msgs::PoseStamped>(
@@ -160,7 +221,7 @@ public:
             10
         );
 
-        // 这些控制 Topic 使用 latched publisher，保证后启动的节点也能拿到最新状态
+        // 这些控制 Topic 使用 latched publisher
         face_enable_pub_ = nh_.advertise<std_msgs::Bool>(
             "/face_detection_enable",
             1,
@@ -216,9 +277,20 @@ public:
 
         initRoute();
 
+        // 加载菜谱
+        std::string recipe_path;
+        nh_.param<std::string>("recipe_file", recipe_path, "/home/reicom2025/recipes.json");
+
+        if (!loadRecipes(recipe_path))
+        {
+            ROS_WARN("⚠️ 菜谱文件加载失败，使用默认硬编码菜谱");
+            loadDefaultRecipes();
+        }
+
         ROS_INFO("========================================");
         ROS_INFO("🚀 任务调度器已启动");
         ROS_INFO("✅ 任务一：导览，不充电");
+        ROS_INFO("✅ 任务二：推荐菜（加载 %zu 道菜谱）", recipes_.size());
         ROS_INFO("✅ 任务三：找手机/书包，完成后充电");
         ROS_INFO("📍 共加载 %zu 个目标点", route_.size());
         ROS_INFO("========================================");
@@ -226,7 +298,7 @@ public:
 
 
     // =========================================================
-    // 路线
+    // 路线初始化
     // =========================================================
 
     void initRoute()
@@ -269,6 +341,204 @@ public:
 
 
     // =========================================================
+    // 菜谱加载
+    // =========================================================
+
+    bool loadRecipes(const std::string& filepath)
+    {
+        std::ifstream file(filepath);
+        if (!file.is_open())
+        {
+            ROS_ERROR("❌ 无法打开菜谱文件: %s", filepath.c_str());
+            return false;
+        }
+
+        Json::Value root;
+        Json::Reader reader;
+
+        if (!reader.parse(file, root))
+        {
+            ROS_ERROR("❌ JSON 解析失败: %s", reader.getFormattedErrorMessages().c_str());
+            return false;
+        }
+
+        const Json::Value& recipe_array = root["recipes"];
+        for (int i = 0; i < (int)recipe_array.size(); ++i)
+        {
+            Recipe recipe;
+            recipe.name = recipe_array[i]["name"].asString();
+            recipe.steps = recipe_array[i]["steps"].asString();
+
+            const Json::Value& ingredients = recipe_array[i]["ingredients"];
+            for (int j = 0; j < (int)ingredients.size(); ++j)
+            {
+                recipe.ingredients.push_back(ingredients[j].asString());
+            }
+
+            recipes_.push_back(recipe);
+        }
+
+        ROS_INFO("✅ 成功加载 %zu 道菜谱", recipes_.size());
+        return true;
+    }
+
+
+    void loadDefaultRecipes()
+    {
+        Recipe r;
+
+        // 默认硬编码菜谱（保证至少有菜可用）
+        r.name = "西红柿炒鸡蛋";
+        r.ingredients = {"西红柿", "鸡蛋", "青椒"};
+        r.steps = "1. 西红柿切块，鸡蛋打散加盐。\n2. 热油炒鸡蛋至凝固盛出。\n3. 炒西红柿至软烂，加入鸡蛋和青椒翻炒。\n4. 加盐调味，出锅。";
+        recipes_.push_back(r);
+
+        r.name = "青椒土豆丝";
+        r.ingredients = {"青椒", "土豆", "鸡蛋"};
+        r.steps = "1. 土豆切丝泡水去淀粉，青椒切丝。\n2. 热油爆香，放入土豆丝翻炒至半透明。\n3. 加入青椒丝翻炒，加盐调味出锅。";
+        recipes_.push_back(r);
+
+        r.name = "黄瓜炒鸡蛋";
+        r.ingredients = {"黄瓜", "鸡蛋", "虾仁"};
+        r.steps = "1. 黄瓜切片，鸡蛋打散，虾仁去虾线。\n2. 热油炒虾仁至变色盛出。\n3. 炒鸡蛋至凝固，加入黄瓜和虾仁翻炒。\n4. 加盐调味，出锅。";
+        recipes_.push_back(r);
+
+        r.name = "白菜炖豆腐";
+        r.ingredients = {"白菜", "豆腐", "猪肉"};
+        r.steps = "1. 白菜切块，豆腐切块，猪肉切片。\n2. 热油煎豆腐至金黄盛出。\n3. 炒猪肉至变色，放入白菜翻炒，加水炖煮。\n4. 放入豆腐炖5分钟，加盐调味出锅。";
+        recipes_.push_back(r);
+
+        ROS_INFO("✅ 加载 %zu 道默认硬编码菜谱", recipes_.size());
+    }
+
+
+    // =========================================================
+    // 菜谱匹配算法
+    // =========================================================
+
+    bool matchRecipe(
+        const std::vector<std::string>& detected,
+        std::vector<std::string>& selected,
+        std::string& dish_name,
+        std::string& recipe_steps
+    )
+    {
+        if (detected.empty() || recipes_.empty())
+        {
+            return false;
+        }
+
+        // 将识别的食材转为集合，方便查找
+        std::set<std::string> detected_set(detected.begin(), detected.end());
+
+        int best_match_count = 0;
+        int best_recipe_index = -1;
+
+        // 遍历所有菜谱，计算匹配度
+        for (int i = 0; i < (int)recipes_.size(); ++i)
+        {
+            const Recipe& recipe = recipes_[i];
+            int match_count = 0;
+
+            for (const std::string& ingredient : recipe.ingredients)
+            {
+                if (detected_set.count(ingredient) > 0)
+                {
+                    match_count++;
+                }
+            }
+
+            // 检查是否所有食材都匹配上了
+            if (match_count == (int)recipe.ingredients.size())
+            {
+                // 完全匹配，直接选择
+                selected = recipe.ingredients;
+                dish_name = recipe.name;
+                recipe_steps = recipe.steps;
+                return true;
+            }
+
+            // 记录最高匹配度
+            if (match_count > best_match_count)
+            {
+                best_match_count = match_count;
+                best_recipe_index = i;
+            }
+        }
+
+        // 没有完全匹配，选择匹配度最高的（至少匹配2种食材）
+        if (best_recipe_index >= 0 && best_match_count >= 2)
+        {
+            const Recipe& best = recipes_[best_recipe_index];
+
+            // 选中的食材：从检测到的中取菜谱需要的食材
+            for (const std::string& ingredient : best.ingredients)
+            {
+                if (detected_set.count(ingredient) > 0)
+                {
+                    selected.push_back(ingredient);
+                }
+            }
+
+            // 如果选中的少于3种，补一些检测到的其他食材
+            for (const std::string& ingredient : detected)
+            {
+                if (std::find(selected.begin(), selected.end(), ingredient) == selected.end())
+                {
+                    selected.push_back(ingredient);
+                    if ((int)selected.size() >= 3) break;
+                }
+            }
+
+            dish_name = best.name;
+            recipe_steps = best.steps;
+            return true;
+        }
+
+        return false;
+    }
+
+
+    // =========================================================
+    // 工具函数
+    // =========================================================
+
+    std::vector<std::string> parseDetectedIngredients(const std::string& result)
+    {
+        std::vector<std::string> ingredients;
+        std::stringstream ss(result);
+        std::string item;
+
+        while (std::getline(ss, item, ','))
+        {
+            // 去除首尾空格
+            item.erase(0, item.find_first_not_of(" \t"));
+            item.erase(item.find_last_not_of(" \t") + 1);
+
+            if (!item.empty())
+            {
+                ingredients.push_back(item);
+            }
+        }
+
+        return ingredients;
+    }
+
+
+    std::string joinStrings(const std::vector<std::string>& vec, const std::string& delimiter)
+    {
+        if (vec.empty()) return "";
+
+        std::string result = vec[0];
+        for (int i = 1; i < (int)vec.size(); ++i)
+        {
+            result += delimiter + vec[i];
+        }
+        return result;
+    }
+
+
+    // =========================================================
     // 基础控制
     // =========================================================
 
@@ -305,7 +575,7 @@ public:
         task3_detection_enable_pub_.publish(msg);
 
         ROS_INFO(
-            "📷 任务三目标检测控制: %s",
+            "📷 任务三/任务二 检测控制: %s",
             enable ? "开启" : "关闭"
         );
     }
@@ -318,15 +588,9 @@ public:
         ros::WallTime start_time = ros::WallTime::now();
         ros::WallRate rate(10.0);
 
-        while (
-            ros::ok()
-            &&
-            goal_pub_.getNumSubscribers() == 0
-        )
+        while (ros::ok() && goal_pub_.getNumSubscribers() == 0)
         {
-            const double elapsed = (
-                ros::WallTime::now() - start_time
-            ).toSec();
+            const double elapsed = (ros::WallTime::now() - start_time).toSec();
 
             if (elapsed >= timeout_seconds)
             {
@@ -337,11 +601,7 @@ public:
                 return false;
             }
 
-            ROS_INFO_THROTTLE(
-                2.0,
-                "⏳ /nav_goal 暂无订阅者，继续等待..."
-            );
-
+            ROS_INFO_THROTTLE(2.0, "⏳ /nav_goal 暂无订阅者，继续等待...");
             rate.sleep();
         }
 
@@ -356,7 +616,7 @@ public:
 
 
     // =========================================================
-    // 人脸 -> 欢迎语 -> 开启语音
+    // 人脸回调
     // =========================================================
 
     void faceCallback(const std_msgs::Bool::ConstPtr& msg)
@@ -381,7 +641,6 @@ public:
         setVoiceListening(false);
         setTask3Detection(false);
 
-        // 欢迎语完整播放后才开始听用户讲话
         speakSync("你好，需要帮助吗？");
 
         setVoiceListening(true);
@@ -392,7 +651,7 @@ public:
 
 
     // =========================================================
-    // 语音任务分流
+    // 语音回调
     // =========================================================
 
     void voiceCallback(const std_msgs::String::ConstPtr& msg)
@@ -411,12 +670,38 @@ public:
         }
 
         const bool has_guide = containsText(text, "参观");
+        const bool has_recommend = containsText(text, "推荐菜");
         const bool has_phone = containsText(text, "手机");
         const bool has_backpack = containsText(text, "书包");
 
-        // -----------------------------------------------------
-        // 同一句同时出现“手机”和“书包”：避免猜用户到底要找哪个
-        // -----------------------------------------------------
+        // =========================================================
+        // 任务二：推荐菜
+        // =========================================================
+        if (has_recommend)
+        {
+            if (voice_command_received_.exchange(true))
+            {
+                ROS_WARN("⚠️ 当前任务已经触发，忽略重复命令");
+                return;
+            }
+
+            current_task_ = TaskType::TASK2_RECOMMEND_FOOD;
+
+            setVoiceListening(false);
+            setFaceDetection(false);
+            setTask3Detection(false);
+
+            ROS_INFO("✅ 触发任务二：推荐菜");
+
+            speakSync("好的，带您去厨房看看有什么食材");
+
+            startCurrentTaskNavigation();
+            return;
+        }
+
+        // =========================================================
+        // 任务三：手机/书包（优先匹配）
+        // =========================================================
         if (has_phone && has_backpack)
         {
             setVoiceListening(false);
@@ -425,9 +710,6 @@ public:
             return;
         }
 
-        // -----------------------------------------------------
-        // 任务三优先匹配
-        // -----------------------------------------------------
         if (has_phone || has_backpack)
         {
             if (voice_command_received_.exchange(true))
@@ -443,11 +725,13 @@ public:
             if (has_phone)
             {
                 current_task_ = TaskType::TASK3_FIND_PHONE;
+                speakSync("好的，请跟我来");
                 ROS_INFO("✅ 触发任务三：寻找手机");
             }
             else
             {
                 current_task_ = TaskType::TASK3_FIND_BACKPACK;
+                speakSync("好的，请跟我来");
                 ROS_INFO("✅ 触发任务三：寻找书包");
             }
 
@@ -455,9 +739,9 @@ public:
             return;
         }
 
-        // -----------------------------------------------------
-        // 任务一
-        // -----------------------------------------------------
+        // =========================================================
+        // 任务一：导览
+        // =========================================================
         if (has_guide)
         {
             if (voice_command_received_.exchange(true))
@@ -474,16 +758,15 @@ public:
 
             ROS_INFO("✅ 触发任务一导览");
 
-            // 保留任务一原有要求：完整播完再起步
             speakSync("好的，请跟我来");
 
             startCurrentTaskNavigation();
             return;
         }
 
-        // -----------------------------------------------------
-        // 识别出文字但不是有效任务：重新走人脸唤醒流程
-        // -----------------------------------------------------
+        // =========================================================
+        // 无效指令：重新走人脸唤醒流程
+        // =========================================================
         ROS_WARN("⚠️ 当前文字不是有效任务命令: [%s]", text.c_str());
 
         setVoiceListening(false);
@@ -498,17 +781,14 @@ public:
     }
 
 
-    bool containsText(
-        const std::string& text,
-        const std::string& keyword
-    )
+    bool containsText(const std::string& text, const std::string& keyword)
     {
         return text.find(keyword) != std::string::npos;
     }
 
 
     // =========================================================
-    // TTS
+    // TTS 语音播报
     // =========================================================
 
     void speakSync(const std::string& text)
@@ -530,10 +810,7 @@ public:
     }
 
 
-    void speakAsync(
-        const std::string& text,
-        const std::string& name
-    )
+    void speakAsync(const std::string& text, const std::string& name)
     {
         speech_finished_ = false;
 
@@ -567,18 +844,14 @@ public:
 
 
     // =========================================================
-    // 导航反馈
+    // 导航状态回调
     // =========================================================
 
     void statusCallback(const std_msgs::Bool::ConstPtr& msg)
     {
-        if (
-            current_state_ != State::NAVIGATING
-            &&
-            current_state_ != State::GOING_TO_LOBBY
-            &&
-            current_state_ != State::RETURNING
-        )
+        if (current_state_ != State::NAVIGATING
+            && current_state_ != State::GOING_TO_LOBBY
+            && current_state_ != State::RETURNING)
         {
             return;
         }
@@ -677,16 +950,12 @@ public:
 
 
     // =========================================================
-    // 到达餐厅/厨房/客厅/卧室
+    // 到达目标点处理
     // =========================================================
 
     void handleWaypointArrival()
     {
-        if (
-            current_index_ < 0
-            ||
-            current_index_ >= static_cast<int>(route_.size())
-        )
+        if (current_index_ < 0 || current_index_ >= static_cast<int>(route_.size()))
         {
             ROS_ERROR("❌ 目标点索引越界");
             transitionTo(State::ERROR);
@@ -698,12 +967,14 @@ public:
         ROS_INFO("========================================");
         ROS_INFO("✅ 成功到达目标点: %s", wp.name.c_str());
 
-        // 用户确认：任务一/任务三的5秒都从 move_base 成功到达这一刻开始
         waypoint_arrival_time_ = std::chrono::steady_clock::now();
         waypoint_timer_started_ = true;
 
         ROS_INFO("⏱️ %s：从现在开始计算至少5秒停留时间", wp.name.c_str());
 
+        // =========================================================
+        // 任务一：导览播报
+        // =========================================================
         if (current_task_ == TaskType::TASK1_GUIDE)
         {
             transitionTo(State::WAITING_SPEECH);
@@ -711,6 +982,28 @@ public:
             return;
         }
 
+        // =========================================================
+        // 任务二：推荐菜（到达厨房后开始识别）
+        // =========================================================
+        if (current_task_ == TaskType::TASK2_RECOMMEND_FOOD)
+        {
+            // 重置识别状态
+            detected_ingredients_.clear();
+            selected_ingredients_.clear();
+            matched_dish_name_.clear();
+            matched_recipe_.clear();
+            detection_retry_count_ = 0;
+
+            transitionTo(State::TASK2_DETECTING);
+
+            ROS_INFO("🍅 机器人已到达厨房，开始识别食材");
+            setTask3Detection(true);
+            return;
+        }
+
+        // =========================================================
+        // 任务三：找手机/书包
+        // =========================================================
         if (isTask3())
         {
             task3_target_found_current_ = false;
@@ -729,24 +1022,129 @@ public:
 
 
     // =========================================================
-    // 任务三视觉结果
-    // detector 发布：none / phone / backpack / both / error
+    // 视觉检测结果回调（任务二 + 任务三共用）
     // =========================================================
 
-    void task3DetectionResultCallback(
-        const std_msgs::String::ConstPtr& msg
-    )
+    void task3DetectionResultCallback(const std_msgs::String::ConstPtr& msg)
     {
-        if (current_state_ != State::TASK3_DETECTING)
+        // 任务二：推荐菜
+        if (current_state_ == State::TASK2_DETECTING)
         {
-            ROS_WARN_THROTTLE(
-                2.0,
-                "⚠️ 当前不在任务三检测阶段，忽略视觉结果: %s",
-                msg->data.c_str()
-            );
+            handleTask2DetectionResult(msg);
             return;
         }
 
+        // 任务三：找手机/书包
+        if (current_state_ == State::TASK3_DETECTING)
+        {
+            handleTask3DetectionResult(msg);
+            return;
+        }
+
+        ROS_WARN_THROTTLE(
+            2.0,
+            "⚠️ 收到视觉结果但当前不在检测状态: %s",
+            msg->data.c_str()
+        );
+    }
+
+
+    // =========================================================
+    // 任务二：食材识别结果处理
+    // =========================================================
+
+    void handleTask2DetectionResult(const std_msgs::String::ConstPtr& msg)
+    {
+        setTask3Detection(false);
+
+        const std::string result = msg->data;
+
+        ROS_INFO("========================================");
+        ROS_INFO("🍅 任务二食材识别结果: [%s]", result.c_str());
+        ROS_INFO("========================================");
+
+        // result 格式: "apple,banana,tomato" 或 "none" 或 "error"
+        if (result == "error")
+        {
+            ROS_ERROR("❌ 食材识别失败");
+            handleTask2RetryOrFail();
+            return;
+        }
+
+        if (result == "none" || result.empty())
+        {
+            ROS_WARN("⚠️ 未识别到任何食材");
+            handleTask2RetryOrFail();
+            return;
+        }
+
+        // 解析识别的食材列表
+        std::vector<std::string> detected = parseDetectedIngredients(result);
+
+        if (detected.empty())
+        {
+            ROS_WARN("⚠️ 解析食材列表为空");
+            handleTask2RetryOrFail();
+            return;
+        }
+
+        ROS_INFO("📋 识别到的食材: %s", joinStrings(detected, ", ").c_str());
+
+        // 尝试匹配菜谱
+        if (matchRecipe(detected, selected_ingredients_, matched_dish_name_, matched_recipe_))
+        {
+            ROS_INFO("🍽️ 匹配到菜谱: %s", matched_dish_name_.c_str());
+            ROS_INFO("📝 使用食材: %s", joinStrings(selected_ingredients_, ", ").c_str());
+
+            // 构造播报文本
+            std::string speech = "我推荐 ";
+            speech += matched_dish_name_;
+            speech += "，需要 ";
+            speech += joinStrings(selected_ingredients_, "、");
+            speech += "。做法是：";
+            speech += matched_recipe_;
+
+            transitionTo(State::WAITING_SPEECH);
+            speakAsync(speech, "推荐菜");
+            return;
+        }
+
+        // 没有匹配到合适的菜谱
+        ROS_WARN("⚠️ 无法根据识别到的食材匹配菜谱");
+        handleTask2RetryOrFail();
+    }
+
+
+    void handleTask2RetryOrFail()
+    {
+        detection_retry_count_++;
+
+        if (detection_retry_count_ < MAX_DETECTION_RETRIES)
+        {
+            ROS_INFO("🔄 第 %d 次重试识别食材...", detection_retry_count_);
+            ros::Duration(1.0).sleep();
+
+            transitionTo(State::TASK2_DETECTING);
+            setTask3Detection(true);
+        }
+        else
+        {
+            ROS_ERROR("❌ 食材识别失败 %d 次，放弃任务二", MAX_DETECTION_RETRIES);
+
+            speakSync("抱歉，没有找到合适的食材，无法推荐菜品");
+
+            // 返回出发区
+            returnToStart();
+        }
+    }
+
+
+    // =========================================================
+    // 任务三：手机/书包识别结果处理
+    // =========================================================
+
+    void handleTask3DetectionResult(const std_msgs::String::ConstPtr& msg)
+    {
         setTask3Detection(false);
 
         const std::string result = msg->data;
@@ -761,17 +1159,8 @@ public:
             return;
         }
 
-        const bool has_phone = (
-            result == "phone"
-            ||
-            result == "both"
-        );
-
-        const bool has_backpack = (
-            result == "backpack"
-            ||
-            result == "both"
-        );
+        const bool has_phone = (result == "phone" || result == "both");
+        const bool has_backpack = (result == "backpack" || result == "both");
 
         std::string speech;
 
@@ -818,10 +1207,7 @@ public:
             return;
         }
 
-        ROS_INFO(
-            "🎯 当前地点是否找到用户目标: %s",
-            task3_target_found_current_ ? "是" : "否"
-        );
+        ROS_INFO("🎯 当前地点是否找到用户目标: %s", task3_target_found_current_ ? "是" : "否");
         ROS_INFO("🔊 本地点将播报: %s", speech.c_str());
         ROS_INFO("========================================");
 
@@ -831,7 +1217,7 @@ public:
 
 
     // =========================================================
-    // 5秒规则：任务一与任务三共用
+    // 5秒规则：任务一、二、三共用
     // =========================================================
 
     void checkSpeechAndProceed()
@@ -847,48 +1233,31 @@ public:
         }
 
         const auto now = std::chrono::steady_clock::now();
-
-        const double elapsed_seconds =
-            std::chrono::duration<double>(
-                now - waypoint_arrival_time_
-            ).count();
+        const double elapsed_seconds = std::chrono::duration<double>(now - waypoint_arrival_time_).count();
 
         const bool speech_done = speech_finished_.load();
-        const bool minimum_stop_done =
-            elapsed_seconds >= MIN_WAYPOINT_STOP_SECONDS;
+        const bool minimum_stop_done = elapsed_seconds >= MIN_WAYPOINT_STOP_SECONDS;
 
         if (!speech_done)
         {
-            ROS_INFO_THROTTLE(
-                1.0,
-                "🔊 已停留 %.1f 秒，等待本地点任务和语音完整结束...",
-                elapsed_seconds
-            );
+            ROS_INFO_THROTTLE(1.0, "🔊 已停留 %.1f 秒，等待本地点任务和语音完整结束...", elapsed_seconds);
             return;
         }
 
         if (!minimum_stop_done)
         {
-            ROS_INFO_THROTTLE(
-                0.5,
-                "⏱️ 本地点任务已完成，还需停留 %.1f 秒满足5秒规则",
-                MIN_WAYPOINT_STOP_SECONDS - elapsed_seconds
-            );
+            ROS_INFO_THROTTLE(0.5, "⏱️ 本地点任务已完成，还需停留 %.1f 秒满足5秒规则", MIN_WAYPOINT_STOP_SECONDS - elapsed_seconds);
             return;
         }
 
-        ROS_INFO(
-            "✅ %s 本地点处理完成：累计 %.2f 秒，满足5秒规则",
-            route_[current_index_].name.c_str(),
-            elapsed_seconds
-        );
+        ROS_INFO("✅ %s 本地点处理完成：累计 %.2f 秒，满足5秒规则", route_[current_index_].name.c_str(), elapsed_seconds);
 
         speech_finished_ = false;
         waypoint_timer_started_ = false;
 
-        // -----------------------------------------------------
-        // 任务一：四点全部走完 -> 直接回出发区，不充电
-        // -----------------------------------------------------
+        // =========================================================
+        // 任务一：导览
+        // =========================================================
         if (current_task_ == TaskType::TASK1_GUIDE)
         {
             current_index_++;
@@ -902,16 +1271,22 @@ public:
                 transitionTo(State::NAVIGATING);
                 sendNextGoal();
             }
-
             return;
         }
 
-        // -----------------------------------------------------
-        // 任务三：
-        // 找到目标 -> 立即结束巡检并充电
-        // 没找到 -> 下一个地点
-        // 四点全走完仍没找到 -> 充电
-        // -----------------------------------------------------
+        // =========================================================
+        // 任务二：推荐菜（播报完成后直接返回出发区）
+        // =========================================================
+        if (current_task_ == TaskType::TASK2_RECOMMEND_FOOD)
+        {
+            ROS_INFO("🍽️ 任务二推荐菜完成，返回出发区");
+            returnToStart();
+            return;
+        }
+
+        // =========================================================
+        // 任务三：找手机/书包
+        // =========================================================
         if (isTask3())
         {
             if (task3_target_found_current_)
@@ -933,7 +1308,6 @@ public:
                 transitionTo(State::NAVIGATING);
                 sendNextGoal();
             }
-
             return;
         }
 
@@ -943,25 +1317,18 @@ public:
 
 
     // =========================================================
-    // 导航失败
+    // 导航失败处理
     // =========================================================
 
     void handleNavigationFailure()
     {
-        if (
-            current_index_ < 0
-            ||
-            current_index_ >= static_cast<int>(route_.size())
-        )
+        if (current_index_ < 0 || current_index_ >= static_cast<int>(route_.size()))
         {
             transitionTo(State::ERROR);
             return;
         }
 
-        ROS_ERROR(
-            "❌ 导航到 %s 失败",
-            route_[current_index_].name.c_str()
-        );
+        ROS_ERROR("❌ 导航到 %s 失败", route_[current_index_].name.c_str());
 
         setTask3Detection(false);
 
@@ -979,6 +1346,13 @@ public:
         {
             ROS_WARN("⚠️ 任务一最后目标失败，本轮导览结束，直接返回出发区");
             handleTask1Complete();
+            return;
+        }
+
+        if (current_task_ == TaskType::TASK2_RECOMMEND_FOOD)
+        {
+            ROS_WARN("⚠️ 任务二导航失败，直接返回出发区");
+            returnToStart();
             return;
         }
 
@@ -1021,11 +1395,7 @@ public:
 
     void sendNextGoal()
     {
-        if (
-            current_index_ < 0
-            ||
-            current_index_ >= static_cast<int>(route_.size())
-        )
+        if (current_index_ < 0 || current_index_ >= static_cast<int>(route_.size()))
         {
             ROS_ERROR("❌ 目标索引越界，无法发送导航目标");
             transitionTo(State::ERROR);
@@ -1039,8 +1409,7 @@ public:
 
         const Waypoint& wp = route_[current_index_];
 
-        // 任务一不使用柜子专用朝向，恢复为默认0°。
-        // 任务三严格使用用户确认的柜子朝向。
+        // 任务一/任务二使用默认0°朝向，任务三使用柜子朝向
         double goal_angle = 0.0;
 
         if (isTask3())
@@ -1065,27 +1434,16 @@ public:
         goal_pub_.publish(goal);
 
         ROS_INFO("========================================");
-        ROS_INFO(
-            "📤 第 %d/%zu 个目标: %s (%.3f, %.3f)",
-            current_index_ + 1,
-            route_.size(),
-            wp.name.c_str(),
-            wp.x,
-            wp.y
-        );
+        ROS_INFO("📤 第 %d/%zu 个目标: %s (%.3f, %.3f)", current_index_ + 1, route_.size(), wp.name.c_str(), wp.x, wp.y);
 
         if (isTask3())
         {
-            ROS_INFO(
-                "🧭 任务三柜子朝向: %.1f°",
-                goal_angle * 180.0 / M_PI
-            );
+            ROS_INFO("🧭 任务三柜子朝向: %.1f°", goal_angle * 180.0 / M_PI);
         }
         else
         {
-            ROS_INFO("🧭 任务一不使用任务三柜子朝向，使用默认0°导航朝向");
+            ROS_INFO("🧭 任务一/任务二使用默认0°导航朝向");
         }
-
         ROS_INFO("========================================");
     }
 
@@ -1135,7 +1493,6 @@ public:
         setVoiceListening(false);
         setTask3Detection(false);
 
-        // 必须先切状态，再发命令，防止极快的完成消息被忽略
         transitionTo(State::CHARGING);
         sendChargeCommand();
     }
@@ -1200,11 +1557,8 @@ public:
 
     bool isTask3() const
     {
-        return (
-            current_task_ == TaskType::TASK3_FIND_PHONE
-            ||
-            current_task_ == TaskType::TASK3_FIND_BACKPACK
-        );
+        return (current_task_ == TaskType::TASK3_FIND_PHONE
+                || current_task_ == TaskType::TASK3_FIND_BACKPACK);
     }
 
 
@@ -1229,11 +1583,7 @@ public:
             return;
         }
 
-        ROS_INFO(
-            "🔄 状态转换: %s -> %s",
-            stateToString(current_state_).c_str(),
-            stateToString(new_state).c_str()
-        );
+        ROS_INFO("🔄 状态转换: %s -> %s", stateToString(current_state_).c_str(), stateToString(new_state).c_str());
 
         current_state_ = new_state;
     }
@@ -1245,34 +1595,26 @@ public:
         {
             case State::WAITING_START:
                 return "等待启动";
-
             case State::GOING_TO_LOBBY:
                 return "前往走廊";
-
             case State::WAITING_FACE:
                 return "等待人脸识别";
-
             case State::IDLE:
                 return "等待用户指令";
-
             case State::NAVIGATING:
                 return "导航中";
-
+            case State::TASK2_DETECTING:
+                return "任务二识别中";
             case State::TASK3_DETECTING:
                 return "任务三识别中";
-
             case State::WAITING_SPEECH:
                 return "地点任务/语音处理中";
-
             case State::CHARGING:
                 return "任务三充电中";
-
             case State::RETURNING:
                 return "返回出发区中";
-
             case State::ERROR:
                 return "错误状态";
-
             default:
                 return "未知状态";
         }
@@ -1326,17 +1668,12 @@ public:
                 {
                     timeout_counter++;
 
-                    if (
-                        timeout_counter
-                        >
-                        NAV_TIMEOUT_SECONDS * LOOP_RATE_HZ
-                    )
+                    if (timeout_counter > NAV_TIMEOUT_SECONDS * LOOP_RATE_HZ)
                     {
                         ROS_ERROR("⏰ 前往走廊超时，重新发送目标");
                         timeout_counter = 0;
                         sendLobbyGoal();
                     }
-
                     break;
                 }
 
@@ -1344,17 +1681,10 @@ public:
                 {
                     waiting_face_counter++;
 
-                    if (
-                        waiting_face_counter
-                        %
-                        (10 * LOOP_RATE_HZ)
-                        ==
-                        0
-                    )
+                    if (waiting_face_counter % (10 * LOOP_RATE_HZ) == 0)
                     {
                         ROS_INFO("👤 等待人脸识别唤醒...");
                     }
-
                     break;
                 }
 
@@ -1362,17 +1692,10 @@ public:
                 {
                     timeout_counter++;
 
-                    if (
-                        timeout_counter
-                        %
-                        (IDLE_REMIND_INTERVAL * LOOP_RATE_HZ)
-                        ==
-                        0
-                    )
+                    if (timeout_counter % (IDLE_REMIND_INTERVAL * LOOP_RATE_HZ) == 0)
                     {
-                        ROS_INFO("💬 可说：参观 / 帮我找一下手机 / 帮我找一下书包");
+                        ROS_INFO("💬 可说：参观 / 推荐菜 / 帮我找一下手机 / 帮我找一下书包");
                     }
-
                     break;
                 }
 
@@ -1380,17 +1703,25 @@ public:
                 {
                     timeout_counter++;
 
-                    if (
-                        timeout_counter
-                        >
-                        NAV_TIMEOUT_SECONDS * LOOP_RATE_HZ
-                    )
+                    if (timeout_counter > NAV_TIMEOUT_SECONDS * LOOP_RATE_HZ)
                     {
                         ROS_ERROR("⏰ 导航超时");
                         timeout_counter = 0;
                         handleNavigationFailure();
                     }
+                    break;
+                }
 
+                case State::TASK2_DETECTING:
+                {
+                    timeout_counter++;
+
+                    if (timeout_counter > TASK3_DETECTION_TIMEOUT_SECONDS * LOOP_RATE_HZ)
+                    {
+                        ROS_ERROR("⏰ 任务二视觉识别超时，没有收到 /task3_detection_result");
+                        setTask3Detection(false);
+                        handleTask2RetryOrFail();
+                    }
                     break;
                 }
 
@@ -1398,17 +1729,12 @@ public:
                 {
                     timeout_counter++;
 
-                    if (
-                        timeout_counter
-                        >
-                        TASK3_DETECTION_TIMEOUT_SECONDS * LOOP_RATE_HZ
-                    )
+                    if (timeout_counter > TASK3_DETECTION_TIMEOUT_SECONDS * LOOP_RATE_HZ)
                     {
                         ROS_ERROR("⏰ 任务三视觉识别超时，没有收到 /task3_detection_result");
                         setTask3Detection(false);
                         transitionTo(State::ERROR);
                     }
-
                     break;
                 }
 
@@ -1422,21 +1748,13 @@ public:
                 {
                     timeout_counter++;
 
-                    ROS_INFO_THROTTLE(
-                        10.0,
-                        "🔋 等待自动充电节点完成..."
-                    );
+                    ROS_INFO_THROTTLE(10.0, "🔋 等待自动充电节点完成...");
 
-                    if (
-                        timeout_counter
-                        >
-                        CHARGE_TIMEOUT_SECONDS * LOOP_RATE_HZ
-                    )
+                    if (timeout_counter > CHARGE_TIMEOUT_SECONDS * LOOP_RATE_HZ)
                     {
                         ROS_ERROR("⏰ 自动充电超过 %d 秒，进入ERROR状态", CHARGE_TIMEOUT_SECONDS);
                         transitionTo(State::ERROR);
                     }
-
                     break;
                 }
 
@@ -1444,34 +1762,23 @@ public:
                 {
                     timeout_counter++;
 
-                    ROS_INFO_THROTTLE(
-                        5.0,
-                        "🔄 机器人正在返回出发区..."
-                    );
+                    ROS_INFO_THROTTLE(5.0, "🔄 机器人正在返回出发区...");
 
-                    if (
-                        timeout_counter
-                        >
-                        NAV_TIMEOUT_SECONDS * LOOP_RATE_HZ
-                    )
+                    if (timeout_counter > NAV_TIMEOUT_SECONDS * LOOP_RATE_HZ)
                     {
                         ROS_ERROR("⏰ 返回出发区超时，重新发送返回目标");
                         timeout_counter = 0;
                         returnToStart();
                     }
-
                     break;
                 }
 
                 case State::ERROR:
                 {
-                    ROS_WARN_THROTTLE(
-                        5.0,
-                        "⛔ 系统处于错误状态，请查看前面的ERROR日志"
-                    );
-
+                    ROS_WARN_THROTTLE(5.0, "⛔ 系统处于错误状态，请查看前面的ERROR日志");
                     break;
                 }
+
                 case State::WAITING_START:
                 default:
                 {
@@ -1485,15 +1792,15 @@ public:
 };
 
 
+// =========================================================
+// main
+// =========================================================
+
 int main(int argc, char** argv)
 {
     setlocale(LC_CTYPE, "zh_CN.utf8");
 
-    ros::init(
-        argc,
-        argv,
-        "task_scheduler"
-    );
+    ros::init(argc, argv, "task_scheduler");
 
     ROS_INFO("智能服务机器人任务系统");
 

@@ -32,7 +32,7 @@ class VoiceRecognitionNode:
 
         self.running = True
 
-        # task_scheduler 控制当前是否允许监听
+        # task_scheduler 控制是否允许监听
         self.listen_enabled = threading.Event()
 
         # 启动时默认关闭
@@ -44,16 +44,7 @@ class VoiceRecognitionNode:
 
         self.recognizer = sr.Recognizer()
 
-        # =====================================================
-        # 不再执行 adjust_for_ambient_noise()
-        #
-        # 之前多次正常校准值大约为 45~50。
-        # 因此直接使用 50 作为初始值。
-        #
-        # 这样可以避免启动阶段频繁打开 Pulse，
-        # 降低 PortAudio / ALSA 原生层崩溃概率。
-        # =====================================================
-
+        # 不在启动阶段反复校准麦克风，减少 ALSA / PortAudio 问题
         self.recognizer.energy_threshold = float(
             rospy.get_param(
                 '~energy_threshold',
@@ -61,44 +52,13 @@ class VoiceRecognitionNode:
             )
         )
 
-        # 保留动态阈值调整
-        # 在不同比赛现场环境下有一定适应能力
         self.recognizer.dynamic_energy_threshold = True
-
         self.recognizer.dynamic_energy_adjustment_damping = 0.15
         self.recognizer.dynamic_energy_ratio = 1.5
 
-        # 用户停止讲话约0.6秒后认为一句话结束
         self.recognizer.pause_threshold = 0.6
-
-        # 不把极短的瞬时噪声轻易认为是一句话
-        # 但不使用硬性的“0.75秒丢弃”，
-        # 防止比赛现场只说“参观”时被误删。
         self.recognizer.phrase_threshold = 0.2
-
         self.recognizer.non_speaking_duration = 0.3
-
-        # =====================================================
-        # 麦克风
-        # =====================================================
-
-        self.device_index = rospy.get_param(
-            '~device_index',
-            6
-        )
-
-        try:
-            self.device_index = int(
-                self.device_index
-            )
-
-        except Exception:
-            self.device_index = 6
-
-        rospy.loginfo(
-            "🎤 使用 Pulse 麦克风 device_index = %d",
-            self.device_index
-        )
 
         rospy.loginfo(
             "🎚️ 初始 energy_threshold = %.2f",
@@ -106,14 +66,54 @@ class VoiceRecognitionNode:
         )
 
         # =====================================================
-        # 这里只创建对象。
+        # 麦克风选择
         #
-        # 此处不会真正打开音频流。
-        # 真正打开 Pulse 发生在收到 voice ON 以后。
+        # -1：
+        #     使用当前电脑的系统默认输入设备
+        #
+        # >=0：
+        #     使用指定 PyAudio device_index
+        #
+        # 非常重要：
+        # 不能把 -1 直接传给 sr.Microphone(device_index=-1)
         # =====================================================
 
-        self.microphone = sr.Microphone(
-            device_index=self.device_index
+        self.device_index = rospy.get_param(
+            '~device_index',
+            -1
+        )
+
+        try:
+            self.device_index = int(
+                self.device_index
+            )
+        except Exception:
+            self.device_index = -1
+
+        if self.device_index < 0:
+
+            rospy.loginfo(
+                "🎤 麦克风模式：使用系统默认输入设备"
+            )
+
+            # 不传 device_index
+            # PyAudio 会使用当前电脑真正的默认输入设备
+            self.microphone = sr.Microphone()
+
+        else:
+
+            rospy.loginfo(
+                "🎤 麦克风模式：使用指定 device_index = %d",
+                self.device_index
+            )
+
+            self.microphone = sr.Microphone(
+                device_index=self.device_index
+            )
+
+        rospy.loginfo(
+            "🎤 麦克风实际采样率 = %s Hz",
+            str(self.microphone.SAMPLE_RATE)
         )
 
         # =====================================================
@@ -128,11 +128,10 @@ class VoiceRecognitionNode:
         self.thread.start()
 
         # =====================================================
-        # 最后再订阅控制 Topic
+        # 最后订阅控制 Topic
         #
-        # task_scheduler 使用 latched publisher，
-        # 所以即使控制信号之前已经发布，
-        # 现在订阅以后仍然能够收到最新状态。
+        # scheduler 使用 latched publisher，
+        # 后启动也可以收到最新状态。
         # =====================================================
 
         self.listen_control_sub = rospy.Subscriber(
@@ -199,14 +198,10 @@ class VoiceRecognitionNode:
 
 
     # =========================================================
-    # Google语音识别
+    # Google 中文语音识别
     #
-    # 网络错误时使用同一段 audio 最多重试3次。
-    #
-    # 注意：
-    # UnknownValueError 表示 Google 已收到语音，
-    # 只是没听懂。
-    # 这种情况继续听用户重新说，不重复提交同一段。
+    # 网络失败时：
+    # 对同一段录音最多重试3次。
     # =========================================================
 
     def recognize_google_with_retry(
@@ -243,9 +238,7 @@ class VoiceRecognitionNode:
 
             except sr.UnknownValueError:
 
-                # Google已经成功处理音频，
-                # 只是没有听懂。
-                # 直接交回外层继续听新的用户语音。
+                # 网络正常，但是 Google 没听懂
                 raise
 
             except sr.RequestError as e:
@@ -286,44 +279,24 @@ class VoiceRecognitionNode:
             and self.running
         ):
 
-            # =================================================
-            # voice OFF：
-            #
-            # 不碰麦克风，只等待 task_scheduler。
-            # =================================================
-
+            # voice OFF 时完全不碰麦克风
             if not self.listen_enabled.wait(
                 timeout=0.1
             ):
-
                 continue
 
-            # 当前这一轮成功得到的文字
             pending_text = None
 
             try:
 
                 # =================================================
-                # 关键修改：
-                #
-                # 一个完整“等待用户语音”阶段，
-                # Pulse只打开一次。
-                #
-                # Google听不懂 / 没人讲话 / 网络失败，
-                # 都留在这个 with 内继续监听。
-                #
-                # 只有：
-                #
-                # 1. 成功识别出一句文字
-                # 2. scheduler关闭监听
-                #
-                # 才离开 with 并释放 Pulse。
+                # 一整个语音阶段只打开一次麦克风
                 # =================================================
 
                 with self.microphone as source:
 
                     rospy.loginfo(
-                        "🎙️ Pulse麦克风已打开，本轮持续监听"
+                        "🎙️ 麦克风已打开，本轮持续监听"
                     )
 
                     while (
@@ -340,15 +313,6 @@ class VoiceRecognitionNode:
                                 "🎧 正在等待用户讲话..."
                             )
 
-                            # =====================================
-                            # timeout只表示：
-                            #
-                            # 3秒没有开始讲话就返回，
-                            # 然后继续下一轮listen。
-                            #
-                            # 不会退出语音阶段。
-                            # =====================================
-
                             audio = self.recognizer.listen(
                                 source,
                                 timeout=3,
@@ -364,11 +328,7 @@ class VoiceRecognitionNode:
 
                             continue
 
-
-                        # =========================================
-                        # 如果录音过程中 scheduler 已关闭监听
-                        # =========================================
-
+                        # scheduler 已经关闭监听
                         if not self.listen_enabled.is_set():
 
                             rospy.loginfo(
@@ -377,10 +337,9 @@ class VoiceRecognitionNode:
 
                             break
 
-
-                        # =========================================
-                        # 计算音频长度，仅用于调试
-                        # =========================================
+                        # =================================================
+                        # 计算捕获到的语音长度
+                        # =================================================
 
                         try:
 
@@ -395,19 +354,16 @@ class VoiceRecognitionNode:
                             )
 
                         except Exception:
-
                             duration = 0.0
-
 
                         rospy.loginfo(
                             "✅ 已捕获到用户语音，长度约 %.2f 秒",
                             duration
                         )
 
-
-                        # =========================================
-                        # 保存最后一次有效捕获的原始音频
-                        # =========================================
+                        # =================================================
+                        # 保存调试 WAV
+                        # =================================================
 
                         try:
 
@@ -432,10 +388,9 @@ class VoiceRecognitionNode:
                                 str(e)
                             )
 
-
-                        # =========================================
+                        # =================================================
                         # Google识别
-                        # =========================================
+                        # =================================================
 
                         try:
 
@@ -453,7 +408,7 @@ class VoiceRecognitionNode:
                             )
 
                             rospy.loginfo(
-                                "🎧 Pulse保持打开，继续等待用户重新讲话..."
+                                "🎧 麦克风保持打开，继续等待用户重新讲话..."
                             )
 
                             continue
@@ -466,20 +421,17 @@ class VoiceRecognitionNode:
                             )
 
                             rospy.logwarn(
-                                "⏳ Pulse保持打开，继续等待新的用户语音"
+                                "⏳ 麦克风保持打开，继续等待新的用户语音"
                             )
 
                             continue
 
-
                         if not text:
-
                             continue
 
-
-                        # =========================================
-                        # 成功得到一句文字
-                        # =========================================
+                        # =================================================
+                        # 成功得到文字
+                        # =================================================
 
                         rospy.loginfo(
                             "===================================="
@@ -494,43 +446,24 @@ class VoiceRecognitionNode:
                             "===================================="
                         )
 
-
-                        # =========================================
-                        # 非常关键：
-                        #
-                        # 先保存文字，然后退出麦克风 with。
-                        #
-                        # 这样在 task_scheduler 播放：
-                        #
-                        # “好的，请跟我来”
-                        #
-                        # 或重新播放：
-                        #
-                        # “你好，需要帮助吗？”
-                        #
-                        # 之前，Pulse输入设备已经释放。
-                        # =========================================
-
+                        # 先记录文字，再退出 with 释放麦克风
                         pending_text = text
 
                         self.listen_enabled.clear()
 
                         break
 
-
                 # =================================================
-                # 执行到这里时已经离开 with，
-                # Pulse输入流已经关闭。
+                # 离开 with 后，麦克风已经释放
                 # =================================================
 
                 if pending_text is not None:
 
                     rospy.loginfo(
-                        "🔇 Pulse麦克风已释放"
+                        "🔇 麦克风已释放"
                     )
 
                     msg = String()
-
                     msg.data = pending_text
 
                     self.pub.publish(
@@ -546,17 +479,10 @@ class VoiceRecognitionNode:
                         "🔇 本轮语音文字已提交，等待调度器决定下一步"
                     )
 
-
             except Exception as e:
 
-                # Python层面的音频异常可以在这里恢复。
-                #
-                # 如果底层PortAudio直接SIGSEGV，
-                # Python无法捕获，
-                # test.launch的respawn仍作为最后一道保护。
-
                 rospy.logerr(
-                    "❌ Pulse语音阶段发生异常: %s",
+                    "❌ 语音阶段发生异常: %s",
                     str(e)
                 )
 
@@ -576,7 +502,6 @@ class VoiceRecognitionNode:
     def shutdown(self):
 
         self.running = False
-
         self.listen_enabled.clear()
 
         rospy.loginfo(
@@ -595,11 +520,9 @@ if __name__ == '__main__':
         rospy.spin()
 
     except rospy.ROSInterruptException:
-
         pass
 
     finally:
 
         if node is not None:
-
             node.shutdown()

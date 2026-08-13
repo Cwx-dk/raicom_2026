@@ -16,6 +16,10 @@ find_package(catkin REQUIRED COMPONENTS
   std_msgs
 )
 
+## 查找 jsoncpp 库（使用 pkg-config 方式）
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(JSONCPP REQUIRED jsoncpp)
+
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
 
@@ -121,6 +125,7 @@ catkin_package(
 include_directories(
 # include
   ${catkin_INCLUDE_DIRS}
+  ${JSONCPP_INCLUDE_DIRS} 
 )
 
 ## Declare a C++ library
@@ -151,6 +156,7 @@ add_executable(task_scheduler_node src/task_scheduler.cpp)
 ## Specify libraries to link a library or executable target against
 target_link_libraries(task_scheduler_node
   ${catkin_LIBRARIES}
+  ${JSONCPP_LIBRARIES}
 )
 
 #############

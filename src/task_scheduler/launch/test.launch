@@ -10,20 +10,24 @@
           respawn="true"
           respawn_delay="2">
 
-        <param name="device_index"
-               value="6"/>
+        <param name="device_index" value="-1"/>
+
+        <env name="http_proxy"  value="http://192.168.103.101:7890"/>
+        <env name="https_proxy" value="http://192.168.103.101:7890"/>
+        <env name="HTTP_PROXY"  value="http://192.168.103.101:7890"/>
+        <env name="HTTPS_PROXY" value="http://192.168.103.101:7890"/>
+
+        <env name="no_proxy"  value="localhost,127.0.0.1,::1"/>
+        <env name="NO_PROXY" value="localhost,127.0.0.1,::1"/>
+
+        <env name="ALL_PROXY" value=""/>
+        <env name="all_proxy" value=""/>
+        <env name="ftp_proxy" value=""/>
+        <env name="FTP_PROXY" value=""/>
 
     </node>
 
-
-    <!-- ================================================== -->
     <!-- 人脸唤醒 -->
-    <!-- 注意：
-         test.launch 只负责启动 face_node。
-         是否真正打开电脑摄像头，应由 face_node 根据
-         /face_detection_enable 动态控制。
-    -->
-    <!-- ================================================== -->
     <node name="face_node"
           pkg="yolo_face"
           type="face_node.py"
@@ -31,10 +35,7 @@
           respawn="true"
           respawn_delay="2"/>
 
-
-    <!-- ================================================== -->
     <!-- /nav_goal -> move_base -->
-    <!-- ================================================== -->
     <node name="nav_goal_node"
           pkg="reicoures_nav"
           type="nav_goal_node"
@@ -42,23 +43,13 @@
           respawn="true"
           respawn_delay="2"/>
 
-
     <!-- ================================================== -->
-    <!-- 任务三充电所需服务 -->
-    <!-- relative_move：最终充电对接/退出 -->
-    <!-- ar_base_sim：使用 /bottom_camera 识别充电AR码 -->
-    <!-- 这里不会抬高 bottom_camera -->
+    <!-- 充电所需服务 -->
     <!-- ================================================== -->
     <include file="$(find relative_move)/launch/relative_move.launch"/>
-
     <include file="$(find ar_pose)/launch/ar_base_sim.launch"/>
 
-
-    <!-- ================================================== -->
-    <!-- 自动充电控制 -->
-    <!-- 只有 task_scheduler 在任务三结束后发布 -->
-    <!-- /charge_command=true 才真正执行充电 -->
-    <!-- ================================================== -->
+    <!-- 自动充电控制节点 -->
     <node name="auto_charge_node"
           pkg="reicoures_relocalization"
           type="auto_charge_node"
@@ -66,13 +57,8 @@
           respawn="true"
           respawn_delay="2"/>
 
-
     <!-- ================================================== -->
-    <!-- 任务三：手机/书包目标检测 -->
-    <!-- 明确使用仿真机器人 Berxel 摄像头：
-         /berxel_base/color/image_raw
-    -->
-    <!-- 完全不使用电脑摄像头 -->
+    <!-- 任务三目标检测（找手机/书包） -->
     <!-- ================================================== -->
     <node name="task3_detector"
           pkg="task3_vision"
@@ -87,47 +73,42 @@
         <param name="image_topic"
                value="/berxel_base/color/image_raw"/>
 
-        <param name="conf"
-               value="0.25"/>
-
-        <param name="imgsz"
-               value="640"/>
-
-        <param name="max_fps"
-               value="10.0"/>
-
-        <!-- 第一帧YOLO成功后，再正式计算这1.5秒 -->
-        <param name="detect_seconds"
-               value="1.5"/>
-
-        <!-- 某类别至少命中3帧才认为存在 -->
-        <param name="min_hit_frames"
-               value="3"/>
-
-        <!-- detector内部保护；不改变正常1.5秒识别 -->
-        <param name="internal_timeout"
-               value="8.0"/>
-
-        <!-- 持续显示机器人第一视角 -->
-        <param name="show_window"
-               value="true"/>
-
-        <!--
-        如果启动日志里的 model.names 不能自动匹配，
-        再按实际ID解除注释：
-
-        <param name="phone_class_id"
-               value="0"/>
-
-        <param name="backpack_class_id"
-               value="1"/>
-        -->
+        <param name="conf" value="0.25"/>
+        <param name="imgsz" value="640"/>
+        <param name="max_fps" value="10.0"/>
+        <param name="detect_seconds" value="1.5"/>
+        <param name="min_hit_frames" value="3"/>
+        <param name="show_window" value="true"/>
 
     </node>
 
+    <!-- ================================================== -->
+    <!-- 任务二食材识别（推荐菜） -->
+    <!-- ================================================== -->
+    <node name="task2_detector"
+          pkg="task_scheduler"                         
+          type="task2_detector.py"
+          output="screen"
+          respawn="true"
+          respawn_delay="2">
+
+        <param name="model_path"
+               value="/home/reicom2025/bobac3_ws/src/model/best.pt"/>
+
+        <param name="image_topic"
+               value="/berxel_base/color/image_raw"/>
+
+        <param name="conf" value="0.25"/>
+        <param name="imgsz" value="640"/>
+        <param name="max_fps" value="10.0"/>
+        <param name="detect_seconds" value="1.5"/>
+        <param name="min_hit_frames" value="3"/>
+        <param name="show_window" value="true"/>
+
+    </node>
 
     <!-- ================================================== -->
-    <!-- 任务调度器最后启动 -->
+    <!-- 任务调度器（放最后启动） -->
     <!-- ================================================== -->
     <node name="task_scheduler_node"
           pkg="task_scheduler"
